@@ -1,0 +1,12 @@
+node_modules/
+dist/
+dist-ssr/
+.vite/
+coverage/
+.env
+.env.*
+*.local
+*.log
+.idea/
+.vscode/
+

@@ -1,0 +1,300 @@
+/* =================================================================
+   智面舱 AI Interview Hub V2 - Unified Design System
+   Brand: #2563EB | 8px Grid | Border-First Aesthetic | High-Fidelity
+   ================================================================= */
+
+:root {
+  /* Brand Palette */
+  --zh-primary: #2563EB;
+  --zh-primary-hover: #1D4ED8;
+  --zh-primary-light: #EFF6FF;
+  --zh-primary-focus: rgba(37, 99, 235, 0.15);
+
+  /* Backgrounds */
+  --zh-bg: #F7F9FC;
+  --zh-card-bg: #FFFFFF;
+  --zh-sub-bg: #F8FAFC;
+
+  /* Typography Colors */
+  --zh-text-title: #0F2347;
+  --zh-text-body: #334155;
+  --zh-text-muted: #64748B;
+  --zh-text-light: #94A3B8;
+
+  /* Borders & Dividers */
+  --zh-border: #E7EDF5;
+  --zh-border-light: #F1F5F9;
+
+  /* Semantic Status Colors */
+  --zh-success: #10B981;
+  --zh-success-light: #ECFDF5;
+  --zh-warning: #F59E0B;
+  --zh-warning-light: #FFFBEB;
+  --zh-danger: #EF4444;
+  --zh-danger-light: #FEF2F2;
+
+  /* Strict Radii Spec */
+  --zh-radius-btn: 8px;
+  --zh-radius-input: 10px;
+  --zh-radius-card: 12px;
+  --zh-radius-box: 16px;
+
+  /* Border-First Elevation */
+  --zh-shadow-sm: 0 1px 2px 0 rgba(15, 35, 71, 0.04);
+  --zh-shadow-card: 0 1px 3px 0 rgba(15, 35, 71, 0.04);
+  --zh-shadow-hover: 0 6px 24px rgba(15, 35, 71, 0.06);
+
+  /* Typography Stack */
+  --zh-font: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, sans-serif;
+}
+
+/* Reset & Box Sizing */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--zh-font);
+  background-color: var(--zh-bg);
+  color: var(--zh-text-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.55;
+  font-size: 14px;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Typography Hierarchy */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--zh-text-title);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.zh-hero-title {
+  font-size: 32px;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.zh-page-title {
+  font-size: 26px;
+  letter-spacing: -0.015em;
+}
+
+.zh-section-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.zh-stat-val {
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--zh-text-title);
+}
+
+/* Standard Page Container (8px grid spacing) */
+.zh-page-container {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+
+/* Base Card Aesthetic: Border First with controlled micro-hover */
+.zh-card {
+  background: var(--zh-card-bg);
+  border-radius: var(--zh-radius-card);
+  border: 1px solid var(--zh-border);
+  box-shadow: var(--zh-shadow-card);
+  padding: 24px;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.zh-card-interactive:hover {
+  transform: translateY(-2px);
+  border-color: #BFDBFE;
+  box-shadow: var(--zh-shadow-hover);
+}
+
+/* Empty State Modern Styling */
+.zh-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+}
+.zh-empty-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--zh-primary-light);
+  color: var(--zh-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+.zh-empty-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--zh-text-title);
+  margin-bottom: 8px;
+}
+.zh-empty-desc {
+  font-size: 13px;
+  color: var(--zh-text-muted);
+  max-width: 360px;
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* =================================================================
+   Element Plus Component Custom Overrides (Remove default template look)
+   ================================================================= */
+
+/* Buttons */
+.el-button {
+  font-family: var(--zh-font) !important;
+  font-weight: 500 !important;
+  border-radius: var(--zh-radius-btn) !important;
+  transition: all 0.12s ease !important;
+  border-color: var(--zh-border) !important;
+}
+
+.el-button--primary {
+  --el-button-bg-color: var(--zh-primary) !important;
+  --el-button-border-color: var(--zh-primary) !important;
+  --el-button-hover-bg-color: var(--zh-primary-hover) !important;
+  --el-button-hover-border-color: var(--zh-primary-hover) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.2) !important;
+}
+
+.el-button--primary.is-plain {
+  --el-button-bg-color: var(--zh-primary-light) !important;
+  --el-button-border-color: #BFDBFE !important;
+  color: var(--zh-primary) !important;
+}
+.el-button--primary.is-plain:hover {
+  --el-button-bg-color: var(--zh-primary) !important;
+  --el-button-border-color: var(--zh-primary) !important;
+  color: #FFFFFF !important;
+}
+
+.el-button--success {
+  --el-button-bg-color: var(--zh-success) !important;
+  --el-button-border-color: var(--zh-success) !important;
+}
+
+/* Inputs & Selects */
+.el-input__wrapper,
+.el-textarea__inner {
+  border-radius: var(--zh-radius-input) !important;
+  box-shadow: 0 0 0 1px var(--zh-border) inset !important;
+  background-color: #FFFFFF !important;
+  transition: all 0.15s ease !important;
+  color: var(--zh-text-title) !important;
+}
+
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1.5px var(--zh-primary) inset, 0 0 0 4px var(--zh-primary-focus) !important;
+}
+
+/* Card */
+.el-card {
+  border-radius: var(--zh-radius-card) !important;
+  border: 1px solid var(--zh-border) !important;
+  background-color: var(--zh-card-bg) !important;
+  box-shadow: var(--zh-shadow-card) !important;
+}
+
+/* Tabs */
+.el-tabs__nav-wrap::after {
+  height: 1px !important;
+  background-color: var(--zh-border) !important;
+}
+.el-tabs__item {
+  font-size: 15px !important;
+  font-weight: 500 !important;
+  color: var(--zh-text-muted) !important;
+  transition: color 0.15s ease !important;
+}
+.el-tabs__item.is-active {
+  color: var(--zh-primary) !important;
+  font-weight: 600 !important;
+}
+.el-tabs__active-bar {
+  background-color: var(--zh-primary) !important;
+  height: 2.5px !important;
+  border-radius: 2px !important;
+}
+
+/* Tables */
+.el-table {
+  --el-table-header-bg-color: var(--zh-sub-bg) !important;
+  --el-table-border-color: var(--zh-border) !important;
+  border-radius: var(--zh-radius-card) !important;
+  overflow: hidden;
+  font-size: 13.5px !important;
+}
+.el-table th.el-table__cell {
+  color: var(--zh-text-muted) !important;
+  font-weight: 600 !important;
+}
+
+/* Tags */
+.el-tag {
+  border-radius: 4px !important;
+  font-weight: 500 !important;
+  border: none !important;
+}
+
+/* Dialog */
+.el-dialog {
+  border-radius: var(--zh-radius-box) !important;
+  box-shadow: 0 20px 40px rgba(15, 35, 71, 0.12) !important;
+  border: 1px solid var(--zh-border) !important;
+  overflow: hidden;
+}
+
+/* Micro-animations */
+@keyframes zhFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.zh-animate-fade {
+  animation: zhFadeIn 180ms ease-out;
+}
