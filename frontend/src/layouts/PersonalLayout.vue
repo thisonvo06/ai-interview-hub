@@ -49,6 +49,10 @@
             <el-icon><Reading /></el-icon>
             <span>学习路线</span>
           </el-menu-item>
+          <el-menu-item index="/personal/bookmarks">
+            <el-icon><Star /></el-icon>
+            <span>我的收藏</span>
+          </el-menu-item>
           <el-menu-item index="/personal/notifications">
             <el-icon><Bell /></el-icon>
             <span>消息中心</span>
@@ -88,7 +92,7 @@ import { useAuthStore } from '@/stores/auth'
 import Navbar from '@/components/Navbar.vue'
 import {
   Odometer, Suitcase, Document, Files, PieChart,
-  VideoCamera, TrendCharts, Reading, Bell, User, Setting, VideoPlay
+  VideoCamera, TrendCharts, Reading, Bell, User, Setting, VideoPlay, Star
 } from '@element-plus/icons-vue'
 
 const route = useRoute()

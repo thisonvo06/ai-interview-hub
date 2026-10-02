@@ -7,6 +7,20 @@
       </router-link>
     </div>
 
+    <!-- AI 分析耗时提示 -->
+    <div v-if="loading" class="ai-loading-notice">
+      <div class="ai-loading-bar">
+        <span class="ai-spinner"></span>
+        <span>AI 正在深度分析你的简历,已用时 <strong>{{ aiElapsed }}</strong> 秒...</span>
+      </div>
+      <p v-if="aiElapsed >= 10" class="ai-loading-sub">
+        首次分析需要 10-20 秒，AI 正在逐项诊断中，请耐心等待。
+      </p>
+      <p v-if="aiElapsed >= 20" class="ai-loading-warn">
+        仍在分析中——如果持续超时，可在「AI 服务」中将模式切换为 MOCK 以获得即时结果。
+      </p>
+    </div>
+
     <StateContainer :loading="loading" :error="error" @retry="loadAnalysis">
       <div v-if="analysis" class="analysis-container">
         <!-- Top Score Bar -->
@@ -97,7 +111,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { resumeApi } from '@/api'
 import StateContainer from '@/components/StateContainer.vue'
@@ -111,9 +125,24 @@ const analysis = ref<any>(null)
 const resumeName = ref('核心简历')
 const targetJob = ref('目标岗位')
 
+/* ---- AI 分析耗时追踪 ---- */
+const aiElapsed = ref(0)
+let aiElapsedTimer: any = null
+
+const startAIElapsed = () => {
+  aiElapsed.value = 0
+  if (aiElapsedTimer) clearInterval(aiElapsedTimer)
+  aiElapsedTimer = setInterval(() => { aiElapsed.value++ }, 1000)
+}
+const stopAIElapsed = () => {
+  if (aiElapsedTimer) { clearInterval(aiElapsedTimer); aiElapsedTimer = null }
+}
+
 const loadAnalysis = async () => {
   loading.value = true
   error.value = false
+  aiElapsed.value = 0
+  startAIElapsed()
   try {
     const id = Number(route.params.id)
     const rRes: any = await resumeApi.getResume(id)
@@ -124,6 +153,7 @@ const loadAnalysis = async () => {
   } catch (e) {
     error.value = true
   } finally {
+    stopAIElapsed()
     loading.value = false
   }
 }
@@ -153,6 +183,9 @@ const handleApply = async () => {
 
 onMounted(() => {
   loadAnalysis()
+})
+onUnmounted(() => {
+  stopAIElapsed()
 })
 </script>
 
@@ -322,5 +355,53 @@ onMounted(() => {
   .issues-grid { grid-template-columns: 1fr; }
   .bottom-sections { grid-template-columns: 1fr; }
   .apply-bar { flex-direction: column; align-items: flex-start; }
+}
+
+/* AI 加载等待提示 */
+.ai-loading-notice {
+  max-width: 680px;
+  margin: 0 auto 12px;
+  padding: 14px 18px;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  border-radius: 8px;
+  text-align: center;
+}
+.ai-loading-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #1E40AF;
+}
+.ai-loading-bar strong {
+  color: #2563EB;
+  font-size: 16px;
+}
+.ai-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #BFDBFE;
+  border-top: 2px solid #2563EB;
+  border-radius: 50%;
+  animation: ai-spin 0.8s linear infinite;
+  display: inline-block;
+}
+@keyframes ai-spin {
+  to { transform: rotate(360deg); }
+}
+.ai-loading-sub {
+  font-size: 12px;
+  color: #3B82F6;
+  margin: 8px 0 0;
+}
+.ai-loading-warn {
+  font-size: 12px;
+  color: #92400E;
+  margin: 8px 0 0;
+  background: #FEF3C7;
+  padding: 6px 10px;
+  border-radius: 4px;
 }
 </style>

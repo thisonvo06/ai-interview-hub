@@ -145,6 +145,25 @@ def empty_answer_evaluation(question_text: str) -> Dict[str, Any]:
     }
 
 
+def skip_answer_evaluation(question_text: str) -> Dict[str, Any]:
+    """主动跳过：0 分但评语温和，不产生严厉负面反馈（区别于空作答/超时）。"""
+    return {
+        "score": 0.0,
+        "dimensions": {
+            "professional": 0.0, "relevance": 0.0, "completeness": 0.0,
+            "logic": 0.0, "depth": 0.0, "communication": 0.0,
+        },
+        "evidence": ["候选人主动标记跳过本题，未提交作答"],
+        "weaknesses": ["本题被主动跳过：可能是超出当前知识范围，或希望将时间留给后续题目"],
+        "missing_knowledge": [f"建议复盘时重点关注：{question_text[:60]}{'…' if len(question_text) > 60 else ''}"],
+        "suggestions": [
+            "主动跳过是一种合理的时间管理策略，面试结束后可针对此题定向补强",
+            "建议将此题加入「错题本 / 重点复盘清单」，后续做专项训练"
+        ],
+        "next_action": "BASIC",
+    }
+
+
 def build_ai_reference_points(job_title: str, question_text: str) -> List[str]:
     """AI 动态生成题的参考答案要点兜底（无预置要点时给出通用复盘指引）。"""
     return [
@@ -256,7 +275,8 @@ async def _maybe_followup(
 
 async def submit_answer_core(
     db: Session, interview: Interview, user: User,
-    text: str, duration_sec: Optional[int] = None
+    text: str, duration_sec: Optional[int] = None,
+    skipped: bool = False
 ) -> Dict[str, Any]:
     """当前题作答 → 评分 → 落库 → （可能的追问）→ 推进下一题。REST/WS 共用。"""
     state_machine.ensure(interview.status, state_machine.ANSWERABLE, "提交作答")
@@ -281,6 +301,19 @@ async def submit_answer_core(
         interview.status = "IN_PROGRESS"
         if not interview.started_at:
             interview.started_at = datetime.utcnow()
+        if not interview.current_question_shown_at:
+            mark_question_shown(interview)
+        db.commit()
+    elif interview.status == "COMPLETED":
+        # 已完成面试重新激活：继续作答、清润旧报告，后续再次结算生成新报告
+        interview.status = "IN_PROGRESS"
+        interview.ended_at = None
+        # 清除旧报告以避免和新作答数据不一致
+        old_report = db.query(InterviewReport).filter(
+            InterviewReport.interview_id == interview.id
+        ).first()
+        if old_report:
+            db.delete(old_report)
         if not interview.current_question_shown_at:
             mark_question_shown(interview)
         db.commit()
@@ -317,7 +350,11 @@ async def submit_answer_core(
 
     jd_text, resume_context = load_interview_context(interview, db)
     is_empty = not (text or "").strip()
-    if is_empty:
+    is_skipped = skipped
+    if is_skipped:
+        # 主动跳过：0 分 + 温和提示，不调用 LLM
+        eval_res = skip_answer_evaluation(curr_q.text)
+    elif is_empty:
         # 空作答：直接 0 分并明确提示，不消耗 LLM 调用
         eval_res = empty_answer_evaluation(curr_q.text)
     else:
@@ -431,6 +468,7 @@ async def submit_answer_core(
         "overtime": is_overtime,
         "overtime_sec": overtime_sec,
         "is_empty": is_empty,
+        "is_skipped": is_skipped,
         "remaining_seconds": get_remaining_seconds(interview),
     }
 

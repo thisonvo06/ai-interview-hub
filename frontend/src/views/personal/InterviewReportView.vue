@@ -195,6 +195,18 @@
                   <span class="sec-subtitle">点击展开查看每一道题的候选人实际原对答、AI 采分点证据与针对性精进建议</span>
                 </div>
 
+                <!-- 收藏筛选 -->
+                <div class="bookmark-filter-bar">
+                  <el-button
+                    link
+                    :type="bookmarkFilter ? 'primary' : 'default'"
+                    @click="bookmarkFilter = !bookmarkFilter"
+                  >
+                    <el-icon><Star /></el-icon>
+                    {{ bookmarkFilter ? '仅显示收藏 (' + bookmarks.filter(b => b.reportId === report?.id).length + ' 题)' : '收藏题 (' + bookmarks.filter(b => b.reportId === report?.id).length + ')' }}
+                  </el-button>
+                </div>
+
                 <!-- 时间维度分析（服务端计时口径） -->
                 <div v-if="report.time_analysis" class="time-card">
                   <div class="tc-head">
@@ -247,19 +259,28 @@
                 <div class="questions-accordion">
                   <el-collapse v-model="activeQuestions">
                     <el-collapse-item
-                      v-for="q in report.questions_analysis"
+                      v-for="q in filteredQuestions"
                       :key="q.seq"
                       :name="q.seq.toString()"
                       class="custom-collapse-item"
                     >
                       <template #title>
                         <div class="collapse-title-row">
+                          <button
+                            type="button"
+                            :class="['bookmark-star-btn', { active: isBookmarked(q.seq) }]"
+                            @click.stop="toggleBookmark(q)"
+                            :title="isBookmarked(q.seq) ? '取消收藏' : '收藏用于复盘'"
+                          >
+                            <el-icon :size="16"><StarFilled v-if="isBookmarked(q.seq)" /><Star v-else /></el-icon>
+                          </button>
                           <span class="q-seq-tag">第 {{ q.seq }} 题</span>
                           <span v-if="q.question_type" :class="['q-type-tag', qtypeClass(q.question_type)]">
                             {{ qtypeLabel(q.question_type) }}
                           </span>
                           <span v-if="q.skill_name" class="q-skill-mini">{{ q.skill_name }}</span>
                           <span v-if="q.overtime" class="q-ot-tag">超时 {{ q.overtime_sec }}s</span>
+                          <span v-else-if="q.is_skipped" class="q-skip-tag">已跳过</span>
                           <span v-else-if="q.duration_sec" class="q-time-mini">{{ q.duration_sec }}s/{{ q.time_limit_sec }}s</span>
                           <span class="q-text-snippet">{{ q.question }}</span>
                           <div class="score-badge-box">
@@ -441,7 +462,9 @@ import {
   Reading,
   Download,
   Back,
-  Right
+  Right,
+  Star,
+  StarFilled
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { InterviewReportData } from '@/types'
@@ -452,6 +475,56 @@ const error = ref(false)
 const report = ref<InterviewReportData | null>(null)
 const activeTab = ref('overview')
 const activeQuestions = ref<string[]>(['1', '2'])
+
+/* ====== 复盘重点标记：收藏题目供后续回顾（全局存储，跨报告可查） ====== */
+const BOOKMARK_GLOBAL_KEY = 'zhimeicang_bookmarks'
+type BookmarkEntry = {
+  reportId: number
+  seq: number
+  question: string
+  skill_name: string
+  score: number
+  savedAt: string
+}
+const bookmarks = ref<BookmarkEntry[]>([])
+const bookmarkFilter = ref(false)
+
+const loadBookmarks = () => {
+  try {
+    const raw = localStorage.getItem(BOOKMARK_GLOBAL_KEY)
+    bookmarks.value = raw ? JSON.parse(raw) : []
+  } catch { bookmarks.value = [] }
+}
+const saveBookmarks = () => {
+  localStorage.setItem(BOOKMARK_GLOBAL_KEY, JSON.stringify(bookmarks.value))
+}
+const toggleBookmark = (q: any) => {
+  const idx = bookmarks.value.findIndex(
+    b => b.reportId === report.value?.id && b.seq === q.seq
+  )
+  if (idx >= 0) {
+    bookmarks.value.splice(idx, 1)
+  } else {
+    bookmarks.value.push({
+      reportId: report.value?.id || 0,
+      seq: q.seq,
+      question: q.question || '',
+      skill_name: q.skill_name || '',
+      score: q.score || 0,
+      savedAt: new Date().toISOString()
+    })
+  }
+  bookmarks.value = [...bookmarks.value] // trigger reactivity
+  saveBookmarks()
+}
+const isBookmarked = (seq: number) =>
+  bookmarks.value.some(b => b.reportId === report.value?.id && b.seq === seq)
+
+const filteredQuestions = computed(() => {
+  if (!report.value?.questions_analysis) return []
+  if (!bookmarkFilter.value) return report.value.questions_analysis
+  return report.value.questions_analysis.filter((q: any) => isBookmarked(q.seq))
+})
 
 const qtypeLabel = (t?: string) =>
   ({ PROFESSIONAL: '专业题', GENERAL: '通用题', STRESS: '压力题' }[t || ''] || '综合题')
@@ -548,7 +621,7 @@ const loadReport = async () => {
 }
 
 onMounted(() => {
-  loadReport()
+  loadReport().then(() => loadBookmarks())
 })
 </script>
 
@@ -1252,5 +1325,36 @@ onMounted(() => {
   .overview-cards-grid { grid-template-columns: 1fr; }
   .dimensions-grid { grid-template-columns: 1fr; }
   .benchmark-grid { grid-template-columns: 1fr; }
+}
+
+/* 收藏标记 */
+.bookmark-star-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  margin-right: 4px;
+  color: #94A3B8;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+.bookmark-star-btn:hover { color: #F59E0B; }
+.bookmark-star-btn.active { color: #F59E0B; }
+
+.bookmark-filter-bar {
+  margin: 12px 0 4px;
+}
+.bookmark-filter-bar .el-button {
+  font-size: 13px;
+}
+
+.q-skip-tag {
+  font-size: 11px;
+  color: #94A3B8;
+  background: #1E293B;
+  padding: 1px 7px;
+  border-radius: 4px;
+  border: 1px dashed #475569;
+  flex-shrink: 0;
 }
 </style>

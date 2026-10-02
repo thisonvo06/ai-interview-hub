@@ -156,14 +156,133 @@
           <el-button type="primary" :loading="notifyLoading" @click="handleSaveNotify">保存通知偏好</el-button>
         </div>
       </el-tab-pane>
+
+      <!-- AI 服务接入 -->
+      <el-tab-pane label="AI 服务" name="ai">
+        <div class="settings-section" style="max-width: 560px;">
+          <div class="section-header">
+            <div>
+              <h3 class="section-title">大模型服务接入 (API Key)</h3>
+              <p class="section-sub">接入 OpenAI 兼容协议的大模型后，简历诊断、模拟面试评分、学习路线等 AI 能力将使用真实模型；留空则回退内置沙箱 (Mock)。</p>
+            </div>
+          </div>
+
+          <el-alert
+            v-if="!aiLoading && !aiConfigured"
+            type="info"
+            :closable="false"
+            class="ai-alert"
+            title="当前未配置 API Key，AI 功能以内置沙箱 (Mock) 运行。"
+          />
+          <el-alert
+            v-else-if="!aiLoading"
+            :type="aiForm.mode === 'MOCK' ? 'warning' : 'success'"
+            :closable="false"
+            class="ai-alert"
+            :title="aiForm.mode === 'MOCK' ? '当前引擎模式：内置沙箱 (Mock)' : '当前引擎模式：真实大语言模型 (Real)'"
+          />
+
+          <el-form :model="aiForm" label-position="top" style="margin-top: 16px;">
+            <el-form-item label="服务引擎模式">
+              <el-radio-group v-model="aiForm.mode">
+                <el-radio-button label="REAL">真实大模型 (Real)</el-radio-button>
+                <el-radio-button label="MOCK">内置沙箱 (Mock)</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+
+            <el-form-item label="API 服务 Base URL" required>
+              <el-input
+                v-model="aiForm.base_url"
+                placeholder="https://api.openai.com/v1"
+                :disabled="aiForm.mode === 'MOCK'"
+              />
+              <div class="ai-tip">
+                常用服务商：
+                <span
+                  v-for="p in aiPresets"
+                  :key="p.url"
+                  class="ai-preset"
+                  @click="applyAiPreset(p)"
+                >{{ p.name }}</span>
+              </div>
+            </el-form-item>
+
+            <el-form-item label="模型标识 (Model Name)" required>
+              <el-input
+                v-model="aiForm.model"
+                placeholder="如：gpt-4o-mini, deepseek-chat, qwen-plus"
+                :disabled="aiForm.mode === 'MOCK'"
+              />
+            </el-form-item>
+
+            <el-form-item label="API Key">
+              <el-input
+                v-model="aiForm.api_key"
+                type="password"
+                show-password
+                :placeholder="aiKeyMasked ? `已保存 (${aiKeyMasked})，留空表示不修改` : '请输入 API Key'"
+                :disabled="aiForm.mode === 'MOCK'"
+              />
+              <div class="ai-tip">Key 仅保存在本实例数据库中，页面只回显掩码，不会明文展示；已配置后仅平台管理员可修改。</div>
+            </el-form-item>
+
+            <el-form-item>
+              <el-button :loading="aiTesting" :disabled="aiForm.mode === 'MOCK'" @click="handleAiTest">测试连接</el-button>
+              <el-button type="primary" :loading="aiSaving" @click="handleAiSave">保存配置</el-button>
+            </el-form-item>
+          </el-form>
+
+          <el-alert
+            v-if="aiTestResult"
+            :type="aiTestResult.success ? 'success' : 'error'"
+            :closable="true"
+            class="ai-alert"
+            :title="aiTestResult.message"
+            @close="aiTestResult = null"
+          />
+
+          <!-- 用量统计 -->
+          <div v-if="aiStats" class="ai-stats-panel" v-loading="aiStatsLoading">
+            <h4 class="ai-stats-title">
+              <el-icon><DataAnalysis /></el-icon>
+              服务用量统计
+            </h4>
+            <div class="ai-stats-grid">
+              <div class="ai-stat-item">
+                <span class="ai-stat-val">{{ aiStats.total_calls }}</span>
+                <span class="ai-stat-label">总调用次数</span>
+              </div>
+              <div class="ai-stat-item">
+                <span class="ai-stat-val" :class="{ 'text-red': aiStats.error_calls > 0 }">{{ aiStats.success_rate }}%</span>
+                <span class="ai-stat-label">成功率</span>
+              </div>
+              <div class="ai-stat-item">
+                <span class="ai-stat-val">{{ formatTokens(aiStats.tokens_total) }}</span>
+                <span class="ai-stat-label">总 Token 消耗</span>
+              </div>
+              <div class="ai-stat-item">
+                <span class="ai-stat-val">{{ aiStats.current_model || 'mock-ai' }}</span>
+                <span class="ai-stat-label">当前模型</span>
+              </div>
+            </div>
+            <div v-if="aiStats.total_calls > 0" class="ai-stats-detail">
+              <span>入站 {{ formatTokens(aiStats.tokens_in) }}  ·  出站 {{ formatTokens(aiStats.tokens_out) }}</span>
+            </div>
+            <el-button v-if="aiStats.total_calls > 0" link size="small" style="margin-top: 8px;" @click="fetchAIStats">
+              刷新统计
+            </el-button>
+            <span v-else class="ai-stats-empty">暂无调用记录（当前使用 Mock 模式或尚未通过真实模型完成 AI 任务）</span>
+          </div>
+        </div>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { Monitor } from '@element-plus/icons-vue'
-import { personalApi, authApi } from '@/api'
+import { Monitor, DataAnalysis } from '@element-plus/icons-vue'
+import { personalApi, authApi, publicApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const activeTab = ref('security')
@@ -325,6 +444,116 @@ const handleSaveNotify = async () => {
   }
 }
 
+// AI 服务接入（复用登录前配置向导同一套全局配置接口）
+const aiLoading = ref(false)
+const aiSaving = ref(false)
+const aiTesting = ref(false)
+const aiConfigured = ref(false)
+const aiKeyMasked = ref('')
+const aiTestResult = ref<{ success: boolean; message: string } | null>(null)
+const aiForm = reactive({
+  mode: 'REAL',
+  base_url: 'https://api.openai.com/v1',
+  model: 'gpt-4o-mini',
+  api_key: ''
+})
+const aiPresets = [
+  { name: 'OpenAI', url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  { name: 'DeepSeek', url: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  { name: '通义千问', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+  { name: 'Kimi', url: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
+  { name: '本地 Ollama', url: 'http://localhost:11434/v1', model: 'qwen2.5' }
+]
+
+const applyAiPreset = (p: typeof aiPresets[number]) => {
+  aiForm.base_url = p.url
+  aiForm.model = p.model
+}
+
+const fetchAIConfig = async () => {
+  aiLoading.value = true
+  try {
+    const res: any = await publicApi.getAISettings()
+    if (res) {
+      aiForm.mode = res.mode === 'MOCK' ? 'MOCK' : 'REAL'
+      aiForm.base_url = res.base_url || aiForm.base_url
+      aiForm.model = res.model || aiForm.model
+      aiKeyMasked.value = res.api_key_masked || ''
+      aiConfigured.value = !!res.configured
+    }
+  } catch {
+    // 读取失败时保持默认，允许直接填写
+  } finally {
+    aiLoading.value = false
+  }
+}
+
+const handleAiTest = async () => {
+  if (!aiForm.base_url || !aiForm.model) {
+    ElMessage.warning('请先填写 Base URL 与模型名称')
+    return
+  }
+  if (!aiForm.api_key && !aiConfigured.value) {
+    ElMessage.warning('请先填写 API Key')
+    return
+  }
+  aiTesting.value = true
+  aiTestResult.value = null
+  try {
+    const res: any = await publicApi.testAISettings({
+      base_url: aiForm.base_url,
+      api_key: aiForm.api_key,
+      model: aiForm.model
+    })
+    aiTestResult.value = res || { success: false, message: '测试接口无返回' }
+  } catch (err: any) {
+    aiTestResult.value = { success: false, message: err.message || '测试请求失败' }
+  } finally {
+    aiTesting.value = false
+  }
+}
+
+const handleAiSave = async () => {
+  if (aiForm.mode === 'REAL' && (!aiForm.base_url || !aiForm.model)) {
+    ElMessage.warning('真实模型模式下必须填写 Base URL 与模型名称')
+    return
+  }
+  aiSaving.value = true
+  try {
+    const payload: any = { mode: aiForm.mode, base_url: aiForm.base_url, model: aiForm.model }
+    if (aiForm.api_key) payload.api_key = aiForm.api_key
+    const res: any = await publicApi.updateAISettings(payload)
+    ElMessage.success(res?.message || '配置已保存并生效')
+    await fetchAIConfig()
+    aiForm.api_key = ''
+  } catch (err: any) {
+    // 错误已由拦截器统一提示（如 403 权限拦截）
+  } finally {
+    aiSaving.value = false
+  }
+}
+
+// 用量统计
+const aiStats = ref<any>(null)
+const aiStatsLoading = ref(false)
+
+const formatTokens = (n: number) => {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
+  return String(n)
+}
+
+const fetchAIStats = async () => {
+  aiStatsLoading.value = true
+  try {
+    aiStats.value = await publicApi.getAIStats()
+  } catch {
+    // 读取失败不阻塞
+  } finally {
+    aiStatsLoading.value = false
+  }
+}
+
 const formatDate = (val: string) => {
   if (!val) return '-'
   return new Date(val).toLocaleString('zh-CN', { hour12: false })
@@ -334,6 +563,8 @@ onMounted(() => {
   fetchConsents()
   fetchSessions()
   fetchNotifyPrefs()
+  fetchAIConfig()
+  fetchAIStats()
 })
 </script>
 
@@ -481,5 +712,86 @@ onMounted(() => {
 .notify-desc {
   font-size: 12px;
   color: #64748B;
+}
+
+.ai-alert {
+  margin-bottom: 16px;
+}
+
+.ai-tip {
+  font-size: 12px;
+  color: #94A3B8;
+  margin-top: 6px;
+  line-height: 1.6;
+}
+
+.ai-preset {
+  color: #2563EB;
+  cursor: pointer;
+  margin-right: 10px;
+}
+
+.ai-preset:hover {
+  text-decoration: underline;
+}
+
+/* AI 用量统计 */
+.ai-stats-panel {
+  margin-top: 20px;
+  padding: 16px;
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+}
+
+.ai-stats-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1E293B;
+  margin: 0 0 12px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.ai-stat-item {
+  text-align: center;
+  padding: 10px;
+  background: #FFFFFF;
+  border-radius: 6px;
+  border: 1px solid #E2E8F0;
+}
+
+.ai-stat-val {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  color: #1E293B;
+}
+.ai-stat-val.text-red { color: #EF4444; }
+
+.ai-stat-label {
+  font-size: 11px;
+  color: #64748B;
+  margin-top: 4px;
+  display: block;
+}
+
+.ai-stats-detail {
+  font-size: 12px;
+  color: #64748B;
+  margin-top: 10px;
+  text-align: center;
+}
+
+.ai-stats-empty {
+  font-size: 12px;
+  color: #94A3B8;
 }
 </style>

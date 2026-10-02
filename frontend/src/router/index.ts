@@ -47,6 +47,7 @@ import LearningRoadmap from '@/views/personal/LearningRoadmap.vue'
 import Notifications from '@/views/personal/Notifications.vue'
 import Profile from '@/views/personal/Profile.vue'
 import Settings from '@/views/personal/Settings.vue'
+import BookmarkedQuestions from '@/views/personal/BookmarkedQuestions.vue'
 
 // Enterprise views
 import EnterpriseDashboard from '@/views/enterprise/Dashboard.vue'
@@ -134,6 +135,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'interviews/create', name: 'PersonalInterviewCreate', component: InterviewCreate, meta: { title: '创建模拟面试' } },
       { path: 'growth', name: 'PersonalGrowth', component: GrowthCenter, meta: { title: '个人成长中心' } },
       { path: 'learning', name: 'PersonalLearning', component: LearningRoadmap, meta: { title: 'AI 学习路线图' } },
+      { path: 'bookmarks', name: 'PersonalBookmarks', component: BookmarkedQuestions, meta: { title: '我的收藏夹' } },
       { path: 'notifications', name: 'PersonalNotifications', component: Notifications, meta: { title: '消息通知' } },
       { path: 'profile', name: 'PersonalProfile', component: Profile, meta: { title: '求职意向与资料' } },
       { path: 'settings', name: 'PersonalSettings', component: Settings, meta: { title: '账号与安全设置' } },

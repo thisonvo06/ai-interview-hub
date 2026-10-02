@@ -21,6 +21,7 @@ export const publicApi = {
   getAISettings: () => client.get('/public/ai-settings'),
   updateAISettings: (data: any) => client.put('/public/ai-settings', data),
   testAISettings: (data: any) => client.post('/public/ai-settings/test', data),
+  getAIStats: () => client.get('/public/ai-stats'),
 }
 
 export const jobApi = {
