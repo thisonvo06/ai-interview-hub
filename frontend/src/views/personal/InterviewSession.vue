@@ -123,8 +123,23 @@
                 </button>
               </div>
 
+              <!-- 答题草稿提示 -->
+              <div v-if="draftRestored" class="draft-notice-bar">
+                <el-icon><InfoFilled /></el-icon>
+                <span>已恢复上次未提交的草稿</span>
+                <el-button link size="small" @click="clearDraft">清除草稿</el-button>
+              </div>
+
               <!-- Submit Answer Action -->
               <div class="submit-action-row">
+                <el-button
+                  :disabled="evaluating"
+                  size="large"
+                  class="room-skip-btn"
+                  @click="handleSkipQuestion"
+                >
+                  跳过本题 →
+                </el-button>
                 <el-button
                   type="primary"
                   size="large"
@@ -276,6 +291,48 @@ const resetQuestionTimer = () => {
   questionElapsed.value = 0
 }
 
+/* ====== 草稿保护：自动保存/恢复答题文本 ====== */
+const draftRestored = ref(false)
+let _draftTimer: any = null
+
+const getDraftKey = () => {
+  const ivId = Number(route.params.id)
+  const seq = session.value?.current_question_seq || 1
+  return `zhimeicang_draft_${ivId}_q${seq}`
+}
+
+const saveDraft = () => {
+  const text = answerText.value.trim()
+  if (text) {
+    localStorage.setItem(getDraftKey(), text)
+  } else {
+    localStorage.removeItem(getDraftKey())
+  }
+}
+
+const restoreDraftIfAny = () => {
+  const key = getDraftKey()
+  const saved = localStorage.getItem(key)
+  if (saved) {
+    answerText.value = saved
+    draftRestored.value = true
+    localStorage.removeItem(key)  // 恢复后立即删除，避免重复恢复
+  } else {
+    draftRestored.value = false
+  }
+}
+
+const clearDraft = () => {
+  draftRestored.value = false
+  answerText.value = ''
+}
+
+// 每 2 秒自动保存一次草稿
+watch(answerText, () => {
+  if (_draftTimer) clearTimeout(_draftTimer)
+  _draftTimer = setTimeout(saveDraft, 2000)
+})
+
 const cameraEnabled = ref(true)
 const videoRef = ref<HTMLVideoElement | null>(null)
 let localStream: MediaStream | null = null
@@ -362,6 +419,16 @@ const stopTranscription = () => {
 
 const toggleTranscription = () => {
   transcribing.value ? stopTranscription() : startTranscription()
+}
+
+// 完整复位语音转写状态：中止识别、清空已定稿前缀，避免上一题口述内容串到下一题
+const resetTranscription = () => {
+  if (transcribing.value) {
+    transcribing.value = false
+    try { recognition?.abort() } catch { /* ignore */ }
+    recognition = null
+  }
+  committedText = ''
 }
 
 /* ---------- 题目朗读（speechSynthesis，替代原"假重播"按钮） ---------- */
@@ -479,11 +546,64 @@ const loadSession = async () => {
     resetQuestionTimer()
     startTimer()
     initCamera()
+    restoreDraftIfAny()
   } catch (err: any) {
     error.value = true
   } finally {
     loading.value = false
   }
+}
+
+const handleSkipQuestion = () => {
+  if (!currentQuestion.value?.id) return
+  ElMessageBox.confirm(
+    '确定跳过本题吗？本题将按 0 分记录，但不会产生严厉评语（视为主动放弃）。',
+    '跳过本题',
+    { confirmButtonText: '确定跳过', cancelButtonText: '继续作答', type: 'warning' }
+  ).then(async () => {
+    evaluating.value = true
+    resetTranscription()
+    const interviewId = Number(route.params.id)
+    const spentSec = questionElapsed.value
+    try {
+      const res: any = await interviewApi.answerQuestion(interviewId, {
+        question_id: currentQuestion.value!.id,
+        text: '',
+        duration_sec: spentSec,
+        skipped: true
+      })
+      const data = res?.data || res
+      ElMessage.info('已跳过本题，继续下一题')
+
+      if (data?.is_finished) {
+        router.push(`/interviews/${interviewId}/report`)
+      } else {
+        if (typeof data?.total_questions === 'number') {
+          session.value.total_questions = data.total_questions
+        }
+        if (typeof data?.remaining_seconds === 'number') {
+          remainingSeconds.value = data.remaining_seconds
+        }
+        session.value.current_question_seq = data.next_question?.seq ?? (session.value.current_question_seq + 1)
+        currentQuestion.value = data.next_question || null
+        answerText.value = ''
+        draftRestored.value = false
+        localStorage.removeItem(getDraftKey())
+        resetQuestionTimer()
+        if (data?.is_followup) {
+          ElMessage.info('AI 面试官根据你的回答，追加了一道针对性问题')
+        }
+        if (!currentQuestion.value) {
+          ElMessage.warning('未获取到下一题，正在重新加载考卷')
+          await loadSession()
+        }
+      }
+    } catch (err: any) {
+      ElMessage.error(err.message || '跳过失败')
+    } finally {
+      evaluating.value = false
+    }
+  }).catch(() => {})
 }
 
 const submitCurrentAnswer = async () => {
@@ -495,6 +615,9 @@ const submitCurrentAnswer = async () => {
     ElMessage.error('当前题目缺失，请刷新页面重试')
     return
   }
+
+  // 提交前冻结语音转写，防止上一题口述结果在下一题继续写入
+  resetTranscription()
 
   evaluating.value = true
   const interviewId = Number(route.params.id)
@@ -531,6 +654,8 @@ const submitCurrentAnswer = async () => {
       // 下一题由后端卷面下发（题库预生成 / 自适应追问 / AI 补足）
       currentQuestion.value = data.next_question || null
       answerText.value = ''
+      draftRestored.value = false
+      localStorage.removeItem(getDraftKey())
       resetQuestionTimer()
       if (data?.is_followup) {
         ElMessage.info('AI 面试官根据你的回答，追加了一道针对性问题')
@@ -1016,16 +1141,44 @@ onUnmounted(() => {
 
 .submit-action-row {
   margin-top: 16px;
+  display: flex;
+  gap: 10px;
+}
+
+.room-skip-btn {
+  background: transparent !important;
+  border: 1px solid #475569 !important;
+  color: #94A3B8 !important;
+  font-size: 14px !important;
+  border-radius: 8px !important;
+  flex-shrink: 0;
+}
+.room-skip-btn:hover {
+  border-color: #64748B !important;
+  color: #CBD5E1 !important;
 }
 
 .room-submit-btn {
-  width: 100%;
+  flex: 1;
   height: 44px;
   font-size: 15px !important;
   font-weight: 700 !important;
   border-radius: 8px !important;
   background: #2563EB !important;
   border-color: #2563EB !important;
+}
+
+.draft-notice-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(37, 99, 235, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: #93C5FD;
+  margin-top: 10px;
 }
 
 /* Bottom Hardware Controls */

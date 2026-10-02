@@ -82,6 +82,7 @@ class InterviewAnswerRequest(BaseModel):
     text: str
     # 用时由服务端按呈现时间锚点计算，客户端值仅作无锚点时的回退
     duration_sec: Optional[int] = None
+    skipped: bool = False  # 主动跳过本题（不同于空作答，不产生严厉评语）
     # 语音链路未接入：不再接收客户端假指标（speaking_rate/filler_count 已移除）
 
 class AnswerEvaluationOut(BaseModel):
@@ -104,6 +105,7 @@ class AnswerEvaluationOut(BaseModel):
     overtime: bool = False
     overtime_sec: int = 0
     is_empty: bool = False
+    is_skipped: bool = False  # 主动跳过，评语温和不影响能力画像
 
 class InterviewReportOut(BaseModel):
     id: int

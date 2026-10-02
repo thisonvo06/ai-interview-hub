@@ -34,13 +34,12 @@ def update_ai_settings(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user),
 ):
-    """保存 AI 服务配置。首次配置（尚无 Key）允许匿名写入，方便登录前初始化；
-    已配置后仅允许管理员修改，避免普通用户或未授权者篡改全局引擎。"""
+    """保存 AI 服务配置。需登录后方可修改，保存后即时生效无需重启。"""
     cfg = ai_settings.get_effective_config(db)
     if cfg["configured"]:
-        role_codes = [r.role_code for r in current_user.roles] if current_user else []
-        if not any(r in ("PLATFORM_ADMIN", "SUPER_ADMIN") for r in role_codes):
-            raise HTTPException(status_code=403, detail="AI 服务已配置，修改需管理员登录")
+        # 已配置后仍需登录验证（防止未授权篡改），不再限制为仅管理员
+        if not current_user:
+            raise HTTPException(status_code=401, detail="请先登录后再修改 AI 服务配置")
 
     base_url = str(data.get("base_url", "")).strip()
     if base_url:
@@ -72,6 +71,52 @@ async def test_ai_settings(
     model = str(data.get("model", "")).strip() or cfg["model"]
     result = await ai_settings.test_connection(base_url, api_key, model)
     return ResponseModel(data=result)
+
+
+@router.get("/public/ai-stats", response_model=ResponseModel[dict])
+def get_ai_stats(db: Session = Depends(get_db)):
+    """返回 AI 服务用量统计：总调用次数 / Token 消耗 / 成功率 + 近 20 条调用记录。"""
+    from app.models.system import AICallLog
+    from sqlalchemy import func
+
+    logs = db.query(AICallLog)
+    total = logs.count()
+    success = logs.filter(AICallLog.status == "SUCCESS").count()
+    tokens_in = db.query(func.sum(AICallLog.tokens_in)).scalar() or 0
+    tokens_out = db.query(func.sum(AICallLog.tokens_out)).scalar() or 0
+
+    recent = (
+        logs.order_by(AICallLog.created_at.desc()).limit(20).all()
+    )
+
+    cfg = ai_settings.get_effective_config(db)
+    return ResponseModel(data={
+        "total_calls": total,
+        "success_calls": success,
+        "error_calls": total - success,
+        "success_rate": round(success / total * 100, 1) if total > 0 else 0,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "tokens_total": tokens_in + tokens_out,
+        "current_model": cfg["model"],
+        "current_base_url": cfg["base_url"],
+        "api_key_masked": ai_settings.mask_key(cfg["api_key"]),
+        "configured": cfg["configured"],
+        "recent_logs": [
+            {
+                "id": l.id,
+                "type": l.business_type,
+                "model": l.model,
+                "tokens_in": l.tokens_in,
+                "tokens_out": l.tokens_out,
+                "latency_ms": l.latency_ms,
+                "status": l.status,
+                "created_at": l.created_at.isoformat() if l.created_at else None
+            }
+            for l in recent
+        ]
+    })
+
 
 @router.get("/public/home", response_model=ResponseModel[dict])
 def get_public_home(db: Session = Depends(get_db)):

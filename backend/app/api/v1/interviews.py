@@ -705,7 +705,8 @@ async def answer_interview_question(id: int, req: InterviewAnswerRequest, curren
     # 答题、评分、追问、推进统一走核心服务（与 WebSocket 通道共用）
     result = await submit_answer_core(
         db, interview, current_user,
-        text=req.text, duration_sec=req.duration_sec
+        text=req.text, duration_sec=req.duration_sec,
+        skipped=req.skipped
     )
     eval_res = result["eval_res"]
     next_q = result["next_question"]
@@ -730,7 +731,8 @@ async def answer_interview_question(id: int, req: InterviewAnswerRequest, curren
         raw_score=result.get("raw_score"),
         overtime=result.get("overtime", False),
         overtime_sec=result.get("overtime_sec", 0),
-        is_empty=result.get("is_empty", False)
+        is_empty=result.get("is_empty", False),
+        is_skipped=result.get("is_skipped", False)
     ))
 
 @router.post("/interviews/{id}/finish", response_model=ResponseModel[dict])
@@ -807,6 +809,7 @@ def get_interview_report(id: int, current_user: User = Depends(require_auth), db
                 "overtime": is_ot,
                 "overtime_sec": ot_sec,
                 "is_empty": not (q.answer.text or "").strip(),
+                "is_skipped": json.loads(e.evidence_json)[0].startswith("候选人主动标记跳过") if e.evidence_json else False,
                 "evidence": json.loads(e.evidence_json) if e.evidence_json else [],
                 "weaknesses": json.loads(e.weaknesses_json) if e.weaknesses_json else [],
                 "missing_knowledge": json.loads(e.missing_knowledge_json) if e.missing_knowledge_json else [],

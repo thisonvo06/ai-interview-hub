@@ -1,6 +1,7 @@
 import time
 import json
 import logging
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 import httpx
 from app.ai.schemas import (
@@ -15,6 +16,31 @@ from app.ai.mock_data import (
 )
 
 logger = logging.getLogger("ai_provider")
+
+
+def _log_ai_call(business_type: str, model: str, tokens_in: int, tokens_out: int,
+                 latency_ms: int, status: str, error_code: str = None):
+    """异步安全地将一次 AI 调用记入 AICallLog。"""
+    from app.core.database import SessionLocal
+    from app.models.system import AICallLog
+    db = SessionLocal()
+    try:
+        db.add(AICallLog(
+            business_type=business_type,
+            model=model,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            latency_ms=latency_ms,
+            status=status,
+            error_code=error_code,
+            created_at=datetime.utcnow()
+        ))
+        db.commit()
+    except Exception:
+        pass  # 日志落库失败不影响主流程
+    finally:
+        db.close()
+
 
 class AIProvider:
     def _current_config(self) -> Dict[str, Any]:
@@ -33,7 +59,7 @@ class AIProvider:
         cfg = self._current_config()
         return cfg["mode"] != "mock" and bool(cfg["api_key"])
 
-    async def _call_llm_json(self, prompt: str, schema_class) -> Dict[str, Any]:
+    async def _call_llm_json(self, prompt: str, schema_class, call_type: str = "UNKNOWN") -> Dict[str, Any]:
         """Calls real LLM API with fallback to mock if unreachable or unconfigured."""
         cfg = self._current_config()
         if cfg["mode"] == "mock" or not cfg["api_key"]:
@@ -52,25 +78,42 @@ class AIProvider:
             "response_format": {"type": "json_object"}
         }
 
+        started = time.time()
+        status = "SUCCESS"
+        error_code = None
+        tokens_in = 0
+        tokens_out = 0
         try:
             async with httpx.AsyncClient(timeout=25.0) as client:
                 res = await client.post(f"{cfg['base_url'].rstrip('/')}/chat/completions", headers=headers, json=payload)
+                latency_ms = int((time.time() - started) * 1000)
                 if res.status_code == 200:
                     data = res.json()
+                    usage = data.get("usage") or {}
+                    tokens_in = usage.get("prompt_tokens", 0)
+                    tokens_out = usage.get("completion_tokens", 0)
                     content = data["choices"][0]["message"]["content"]
                     parsed = json.loads(content)
-                    # Validate schema
                     validated = schema_class(**parsed)
-                    return validated.model_dump()
+                    result = validated.model_dump()
+                    _log_ai_call(call_type, cfg["model"], tokens_in, tokens_out, latency_ms, "SUCCESS")
+                    return result
+                else:
+                    latency_ms = int((time.time() - started) * 1000)
+                    error_code = f"HTTP_{res.status_code}"
+                    status = "ERROR"
+                    _log_ai_call(call_type, cfg["model"], 0, 0, latency_ms, "ERROR", error_code)
         except Exception as e:
+            latency_ms = int((time.time() - started) * 1000)
             logger.warning(f"Real LLM call failed, falling back to mock: {e}")
+            _log_ai_call(call_type, cfg["model"], 0, 0, latency_ms, "ERROR", str(e)[:100])
             return None
         return None
 
     async def parse_resume(self, resume_text: str) -> Dict[str, Any]:
         """Parses resume text into structured entities."""
         prompt = f"Parse this resume into JSON:\n{resume_text}"
-        real_res = await self._call_llm_json(prompt, ResumeParseSchema)
+        real_res = await self._call_llm_json(prompt, ResumeParseSchema, "RESUME_PARSE")
         if real_res:
             return real_res
         # Mock mode fallback
@@ -80,7 +123,7 @@ class AIProvider:
     async def parse_jd(self, jd_text: str) -> Dict[str, Any]:
         """Parses enterprise JD text into job fields and skill requirements."""
         prompt = f"Parse this Job Description into JSON:\n{jd_text}"
-        real_res = await self._call_llm_json(prompt, JDParseSchema)
+        real_res = await self._call_llm_json(prompt, JDParseSchema, "JD_PARSE")
         if real_res:
             return real_res
         validated = JDParseSchema(**MOCK_JD_PARSED)
@@ -126,7 +169,7 @@ class AIProvider:
             f"- Output JSON adhering to: question, skill_name, stage, difficulty, hints, "
             f"question_type (PROFESSIONAL|GENERAL|STRESS), time_limit_sec (integer seconds, 120-300)."
         )
-        real_res = await self._call_llm_json(prompt, QuestionGenSchema)
+        real_res = await self._call_llm_json(prompt, QuestionGenSchema, "QUESTION_GEN")
         if real_res:
             return real_res
 
@@ -181,7 +224,7 @@ class AIProvider:
             "evidence (list of strings), weaknesses (list), missing_knowledge (list), "
             "suggestions (list), next_action (one of FOLLOW_UP, DEEP, BASIC, CHANGE_TOPIC, FINISH)."
         )
-        real_res = await self._call_llm_json(prompt, AnswerEvalSchema)
+        real_res = await self._call_llm_json(prompt, AnswerEvalSchema, "ANSWER_EVAL")
         if real_res:
             return real_res
 
@@ -206,7 +249,7 @@ class AIProvider:
                 "dimension_scores (dict of 专业基础, 项目经验, 系统设计, 沟通表达, 综合素质 -> float), "
                 "strengths (list of 中文 strings), weaknesses (list), suggestions (list), summary (中文 string)."
             )
-            real_res = await self._call_llm_json(prompt, ReportGenSchema)
+            real_res = await self._call_llm_json(prompt, ReportGenSchema, "REPORT_GEN")
             if real_res:
                 return real_res
 
@@ -230,7 +273,7 @@ class AIProvider:
             "\"action_type\": \"INTERVIEW_PRACTICE|COURSE|READING|PROJECT\", \"stage\": str(中文阶段名), "
             "\"deliverable\": str(中文产出物), \"resources\": [str(推荐资源)], \"estimated_weeks\": int}]}"
         )
-        real_res = await self._call_llm_json(prompt, LearningPlanSchema)
+        real_res = await self._call_llm_json(prompt, LearningPlanSchema, "LEARNING_PLAN")
         if real_res and real_res.get("tasks"):
             return real_res["tasks"]
 
@@ -248,7 +291,7 @@ class AIProvider:
             "improvements (list of 中文 strings), suggested_modifications "
             "(list of {section, suggestion} objects), keyword_enrichment (list of 中文技术关键词)."
         )
-        real_res = await self._call_llm_json(prompt, ResumeOptimizeSchema)
+        real_res = await self._call_llm_json(prompt, ResumeOptimizeSchema, "RESUME_OPTIMIZE")
         if real_res:
             return real_res
 
@@ -282,7 +325,7 @@ class AIProvider:
             "\"work_experience\": [{\"company\": str, \"title\": str, \"description\": str}], "
             "\"changes\": [list of 中文 strings describing what was improved]}"
         )
-        real_res = await self._call_llm_json(prompt, ResumeRewriteSchema)
+        real_res = await self._call_llm_json(prompt, ResumeRewriteSchema, "RESUME_REWRITE")
         if real_res:
             return real_res
         return {"projects": [], "skills": [], "work_experience": [], "changes": []}

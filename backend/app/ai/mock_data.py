@@ -137,7 +137,7 @@ def generate_mock_evaluation(question_text: str, answer_text: str, seq: int) -> 
         "MySQL索引": ["聚簇索引", "非聚簇索引", "b+树", "回表", "覆盖索引", "最左前缀", "索引下推", "explain", "慢查询"],
         "事务MVCC": ["mvcc", "undo log", "redo log", "隔离级别", "可重复读", "幻读", "间隙锁", "next-key lock"],
         "分布式架构": ["分库分表", "雪花算法", "时钟回拨", "分布式事务", "2pc", "tcc", "seata", "幂等设计", "消息队列"],
-        "项目量化": ["qps", "tps", "rt", "tp99", "压测", "提升了", "降低了", "优化了", "从", "到", "倍"],
+        "项目量化": ["qps", "tps", "tp99", "压测", "提升了", "降低了", "优化了"],
         "STAR结构": ["项目背景", "我负责", "我做的", "遇到的问题", "解决方案", "最终结果", "效果", "收益"],
     }
 
@@ -154,8 +154,15 @@ def generate_mock_evaluation(question_text: str, answer_text: str, seq: int) -> 
     has_structure = any(p in ans for p in ["第一", "第二", "第三", "首先", "其次", "然后", "最后", "1.", "2.", "3."])
     has_numbers = any(c.isdigit() for c in ans) and any(p in ans_lower for p in ["qps", "tps", "%", "倍", "ms", "万"])
 
+    # 纯乱码/重复字符检测：键盘乱敲、刷屏重复等不视为有效作答
+    has_cjk = any('一' <= c <= '鿿' for c in ans)
+    unique_ratio = len(set(ans)) / max(1, len(ans))
+    is_repeat = len(ans) >= 6 and unique_ratio < 0.28
+    is_pure_ascii_gibberish = (not has_cjk) and (' ' not in ans) and len(matched_categories) == 0
+    is_gibberish = is_repeat or is_pure_ascii_gibberish
+
     # ========== 2. 分档评分与反馈生成 ==========
-    if is_negative or (is_very_short and len(matched_categories) == 0):
+    if is_negative or is_gibberish or (is_very_short and len(matched_categories) == 0):
         # ---- 差/敷衍回答 ----
         prof = round(random.uniform(32.0, 45.0), 1)
         rel = round(random.uniform(38.0, 50.0), 1)
@@ -442,7 +449,6 @@ def generate_mock_report(interview_id: int, total_questions: int, scores: List[f
         perf = "基础薄弱"
 
     # 根据平均分波动生成维度分（围绕平均分±5分，保持真实感）
-    import random
     dim_scores = {
         "专业基础": round(max(20, min(98, avg_score + random.uniform(-4, 4))), 1),
         "项目经验": round(max(20, min(98, avg_score + random.uniform(-5, 5))), 1),
