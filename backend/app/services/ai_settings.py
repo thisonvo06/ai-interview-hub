@@ -119,9 +119,8 @@ async def test_connection(base_url: str, api_key: str, model: str) -> dict:
             res = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
             if res.status_code == 200:
                 return {"success": True, "message": "连接成功，API Key 与模型可用"}
-            body = res.text[:300]
-            return {"success": False, "message": f"服务返回 {res.status_code}: {body}"}
+            return {"success": False, "message": f"服务返回 HTTP {res.status_code}，请检查模型、地址与授权配置"}
     except httpx.TimeoutException:
         return {"success": False, "message": "连接超时（15 秒），请检查 Base URL 与网络"}
-    except Exception as e:
-        return {"success": False, "message": f"连接失败: {e}"}
+    except Exception:
+        return {"success": False, "message": "连接失败，请检查服务地址与网络"}

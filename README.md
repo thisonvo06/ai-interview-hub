@@ -18,7 +18,9 @@
 
 ## 🚀 快速开始 — 无需配置，3 分钟跑起来
 
-本地运行三步（Windows 可直接**双击 `start_all.bat`** 一键启动前后端双窗口）：
+Windows 可直接**双击 `一键打开.bat`**（或 `start_all.bat`），自动检查依赖、启动前后端，等待服务就绪后打开浏览器。重复打开会复用已运行的服务；双击 `一键关闭.bat` 可停止后台服务。启动日志保存在 `logs/`。首次缺少依赖时会自动联网安装，需要已安装 Python 3 和 Node.js。
+
+手动安装和启动步骤：
 
 ```bash
 # 1) 后端：虚拟环境 + 依赖（一次性）
@@ -45,6 +47,19 @@ cd frontend && npm run dev
 - 前端：http://localhost:5173 · Swagger 文档：http://127.0.0.1:8000/docs
 - 首次需要演示数据时执行：`cd backend && ..\.venv\Scripts\python.exe scripts\seed_demo.py`
 - `.env` 可从 `.env.example` 复制创建；**不配 LLM Key 也能完整体验**（内置确定性 Mock 引擎）
+
+更新代码后，先双击 `一键关闭.bat`，再双击 `一键打开.bat`，让后端加载新接口并自动执行数据库迁移。已有数据库请先备份；旧登录凭证可能需要重新登录。
+
+## 本次升级
+
+- **求职计划**：收集外部岗位或从平台岗位加入计划，根据本人简历分析技能覆盖与缺口，整理求职信、跟进草稿及 STAR 面试素材，记录进度、截止日期与跟进提醒。分析和准备包使用规则与已有简历材料，并标记来源。
+- **官网投递**：岗位提供企业官网入口；实际投递由用户在官网完成，本系统记录访问与用户确认的投递状态。
+- **面试可靠性与权限**：幂等作答、并发保护、报告失败重试、服务端计时、有效会话校验、WebSocket 短期票据及私有文件授权下载。
+- **界面设计**：暖白纸面、墨绿重点色和杂志式布局，个人空间与主要求职页面适配手机。
+
+使用流程、接口、迁移与验证边界见 [求职计划说明](docs/job-search-workspace.md) 和 [官网投递与后端升级说明](docs/official-apply-backend.md)。参考项目归属见 [第三方许可](THIRD_PARTY_NOTICES.md)。
+
+![求职计划工作台](docs/screenshots/job-search-workspace.jpg)
 
 ## 🔑 演示账号（密码均为 `123456`）
 
@@ -76,7 +91,7 @@ flowchart TB
     API["FastAPI · /api/v1 RESTful<br/>JWT + jti 会话吊销 · RBAC 依赖 · 统一响应信封"]
     WS["WebSocket<br/>实时面试间双通道同步 · 消息通知推送"]
     CORE["服务层<br/>interview_core（答题/推进/结算统一）· state_machine（非法迁移 409）· paper_builder（配比组卷）"]
-    AI["AI 引擎 ai_provider<br/>Mock 沙箱（离线确定性）/ Real（OpenAI 兼容）<br/>Pydantic Schema 校验 · 失败自动回退 Mock"]
+    AI["AI 引擎 ai_provider<br/>Mock 沙箱（离线确定性）/ Real（OpenAI 兼容）<br/>Schema 校验与来源标记 · 正式企业面试要求真实模型"]
     SET["配置中心 system_settings<br/>页面化 AI 配置向导 /ai-setup<br/>优先级 DB > .env > 默认 · 保存即生效"]
     DB[("SQLite（默认）/ MySQL 8<br/>SQLAlchemy 2.0 · 20+ 实体表")]
 
@@ -96,16 +111,16 @@ FastAPI · SQLAlchemy 2.0 · Pydantic v2 · python-jose (JWT) · passlib/bcrypt 
 
 ## 🔩 核心实现
 
-- **双引擎 AI 架构**：`AIProvider` 统一封装 9 类任务（简历解析/优化/改写、JD 解析、出题、六维评分、报告、学习路线、匹配解读），每个任务带 Pydantic Schema 严格校验；未配置 Key 或调用失败自动回退**确定性 Mock 沙箱**，全程离线可演示
-- **登录前 AI 配置向导**（`/ai-setup`）：自部署者无需改 `.env`、无需重启，页面填写 API Key / Base URL / 模型（OpenAI、DeepSeek、通义、Kimi、本地 Ollama 预设一键填入），支持"测试连接"真实探活；Key 掩码回显、首次匿名可写、之后仅管理员可改
+- **双引擎 AI 架构**：`AIProvider` 统一封装 9 类任务（简历解析/优化/改写、JD 解析、出题、六维评分、报告、学习路线、匹配解读），每个任务带 Pydantic Schema 校验并记录实际来源。个人模拟可离线演示；正式企业面试拒绝模拟评分和报告，简历解析失败不会写入虚构经历。
+- **管理员 AI 配置向导**（`/ai-setup`）：管理员页面填写 API Key / Base URL / 模型（OpenAI、DeepSeek、通义、Kimi、本地 Ollama 预设），支持连接测试和密钥掩码回显，保存即生效；配置修改、测试和用量数据均要求平台管理员权限。
 - **结构化题库 + 组卷引擎**：86 题（62 专业 / 12 通用 / 12 压力）覆盖 11 个岗位大类，按面试模式配比抽题、技能优先命中、题干去重；卷面 JSON 快照固化，历史可复现；管理后台可视化维护（只停用不物理删除）
-- **会话状态机与双通道统一**：`READY→IN_PROGRESS⇄PAUSED→COMPLETED/CANCELLED` 集中声明，重复开始/重复提交/终态后操作一律 409；REST 与 WebSocket 共用 `interview_core`，消除逻辑分叉；支持 abort 中止
+- **会话状态机与双通道统一**：`READY→IN_PROGRESS⇄PAUSED→COMPLETED/CANCELLED` 集中声明；REST 与 WebSocket 共用 `interview_core`。作答带题目与请求标识，同一请求重试返回已保存的结果，冲突内容或非法状态返回 409；支持中止与报告恢复。
 - **服务端权威计时**：以题目呈现时间为锚点计算真实单题用时并覆盖客户端上报；超时轻扣分（30s/3 分、上限 15 分、不归零）、空作答判 0、暂停豁免；归零自动交卷结算
 - **自适应追问**：评分返回的 `next_action` 驱动——答得好插同技能更高难度题、答得差插更低难度题（每场上限 2 次），卷面实时记录
 - **闭卷与复盘机制**：作答中不下发参考答案；结算后报告逐题对照要点，直接衔接学习路线补短板
 - **语音链路（零云端成本）**：浏览器原生 Web Speech API 口述转写 + `speechSynthesis` 题目朗读，设备检测真实化（摄像头/麦克风数量、TTS 能力、后端往返实测）
 - **学习路线混合架构**：5 个 AI 岗位模板库（含产出物/推荐资源/建议周期）× 面试薄弱项确定性个性化；未命中回退 LLM 动态生成；打卡真实发放能力分（+2、幂等）并沉淀成长曲线
-- **治理与安全**：JWT + jti 会话落库支持强制下线；越权 403、超管保护拦截；登录账号历史本地化（密码绝不落本地）；找回密码 SMTP 未配置时走开发令牌兜底；AI 调用日志脱敏
+- **治理与安全**：JWT + jti 有效会话校验支持强制下线；越权 403、超管保护拦截；登录账号历史本地化（密码绝不落本地）。找回密码要求可用 SMTP，不返回开发重置令牌；修改密码撤销旧会话。私有文件按所属授权下载，AI 调用日志脱敏。
 
 ## 📊 功能矩阵（规划书 V3.0 对照）
 
@@ -120,11 +135,10 @@ FastAPI · SQLAlchemy 2.0 · Pydantic v2 · python-jose (JWT) · passlib/bcrypt 
 
 | 维度 | 结果 |
 |---|---|
-| 端到端冒烟 | 三套脚本共 **103 项断言**通过（题库组卷 44 + 超时治理 26 + 题库管理与洞察 33，`backend/scripts/test_*.py`） |
-| 类型检查 | 前端 `vue-tsc --noEmit` 0 错误 |
-| 真实 LLM 链路 | 出题→评分→追问→报告→学习路线全链路实机验证通过 |
-| 浏览器实测 | 面试间语音链路、AI 配置向导、登录页入口均经真实浏览器交互验证 |
-| 数据诚实性 | 全站假数据清理：无数据即空态，接口不再写死兜底分值 |
+| 后端回归 | `python -m pytest tests -q --disable-warnings -p no:cacheprovider`：**68 项通过**，测试使用隔离临时数据库与模拟 AI |
+| 类型检查与构建 | `npm run build`：Vue TypeScript 检查和 Vite 生产构建通过，公共依赖仍有包体积提示 |
+| 浏览器实测 | 隔离演示数据验证桌面与 390 px 手机布局、官网投递笔记和求职计划的分析、准备、进度与跟进流程 |
+| 数据诚实性 | 新统计使用实际记录，无依据时显示未知或空态；既有演示及历史记录保留，模拟评分不写入新的正式技能证据 |
 
 ## ⚙️ 环境变量（`.env`，均可选）
 
@@ -132,9 +146,11 @@ FastAPI · SQLAlchemy 2.0 · Pydantic v2 · python-jose (JWT) · passlib/bcrypt 
 |---|---|
 | `DATABASE_URL` | 默认 SQLite 单文件；生产可切 `mysql+pymysql://...` |
 | `SECRET_KEY` | JWT 签名密钥，**生产必改**为强随机串 |
-| `AI_MODE` | `REAL`（默认）或 `MOCK`；未配 Key 或调用失败自动回退 Mock |
-| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | OpenAI 兼容端点三件套；**也可留空**，启动后在 `/ai-setup` 页面配置（页面配置优先级高于 `.env`，保存即时生效） |
-| `SMTP_HOST` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` | 找回密码邮件；未配置时返回开发令牌兜底 |
+| `AI_MODE` | `REAL`（默认）或 `MOCK`；模拟和回退会标记实际来源，正式企业评分和报告要求真实模型 |
+| `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | OpenAI 兼容端点三件套；可在管理员 `/ai-setup` 页面配置（页面配置优先级高于 `.env`，保存即时生效） |
+| `SMTP_HOST` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` | 找回密码邮件；未配置或发送失败时不返回重置令牌 |
+| `FRONTEND_BASE_URL` | 邮件重置链接的前端地址 |
+| `BACKEND_CORS_ORIGINS` | 允许跨域访问的前端地址列表 |
 | `UPLOAD_DIR` | 上传目录，默认 `./uploads` |
 
 ## 🚢 Docker 部署
@@ -150,13 +166,16 @@ docker-compose up -d --build
 
 - **定位竞赛/演示**：登录验证码、接口限流、AI 异步任务队列、病毒扫描等"防御不存在威胁"的能力被明确划为范围外（理由与兜底见 `docs/功能完善与实现建议.md` 第五章），非遗漏
 - SQLite 单文件适合个人/演示规模；多实例水平扩展请切 `DATABASE_URL` 至 MySQL
+- 本次升级验证了 SQLite 迁移与模拟模式；MySQL 和真实模型服务需要在实际部署环境验证。
 - `uvicorn --reload` 只监听 `.py` 文件，**修改 `.env` 需重启后端**；页面配置向导则保存即生效
-- 管理端 AI 统计指标（成功率/延迟）当前为展示值，`AICallLog` 落库统计在待办清单
+- 管理端 AI 统计从调用日志计算成功率、延迟及用量，并区分真实与模拟来源；通知广播仍在当前进程内，多实例部署需要共享消息通道。
 - 语音作答依赖浏览器 Web Speech API（Chrome/Edge 效果最佳），未接入云端 ASR
 
 ## 📚 项目文档
 
 - [更新日志](docs/update_log.md) — 按日期记录全部功能落地与修复
+- [求职计划工作台](docs/job-search-workspace.md) — 岗位收集、准备材料、跟进与技能缺口
+- [官网投递与后端升级](docs/official-apply-backend.md) — 权限、可靠性、迁移与验证
 - [待办与执行清单](docs/ToDoList.md) — 需求来源、决策记录、执行结果
 - [功能完善与实现建议](docs/功能完善与实现建议.md) — 差距分析、范围决策与实施批次
 - [V2 预审报告](docs/V2-PRE-AUDIT.md)

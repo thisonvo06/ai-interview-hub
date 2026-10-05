@@ -1,4 +1,6 @@
 import os
+import uuid
+import logging
 from fastapi import FastAPI, Request, HTTPException, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,13 +11,12 @@ import app.models # Register all models
 
 from app.api.v1 import (
     auth, public, jobs, resumes, applications,
-    personal, interviews, enterprise, admin, files
+    personal, interviews, enterprise, admin, files, external_applications, realtime, job_search
 )
 from app.websocket.interview_ws import handle_interview_websocket
 from app.websocket.notification_ws import handle_notification_websocket
 
 # Create database tables automatically
-Base.metadata.create_all(bind=engine)
 # Lightweight incremental migration for columns added after initial release
 ensure_schema()
 
@@ -28,15 +29,15 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_credentials="*" not in settings.BACKEND_CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Mount uploads static directory
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+app.add_api_route("/uploads/{object_key}", files.download_file, methods=["GET"])
 
 # Include API v1 Routers
 api_v1_prefix = settings.API_V1_STR
@@ -50,6 +51,34 @@ app.include_router(interviews.router, prefix=api_v1_prefix)
 app.include_router(enterprise.router, prefix=api_v1_prefix)
 app.include_router(admin.router, prefix=api_v1_prefix)
 app.include_router(files.router, prefix=api_v1_prefix)
+app.include_router(external_applications.router, prefix=api_v1_prefix)
+app.include_router(realtime.router, prefix=api_v1_prefix)
+app.include_router(job_search.router, prefix=api_v1_prefix)
+
+@app.middleware("http")
+async def trace_request(request: Request, call_next):
+    from app.services.ai_provenance import ai_context
+    from app.core.security import decode_token
+    request_id = uuid.uuid4().hex
+    raw = request.headers.get("Authorization", "")
+    claims = decode_token(raw[7:]) if raw.startswith("Bearer ") else None
+    try:
+        user_id = int(claims["sub"]) if claims else None
+    except (ValueError, KeyError, TypeError):
+        user_id = None
+    with ai_context(user_id=user_id, request_id=request_id):
+        response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+@app.get("/health")
+def health():
+    from sqlalchemy import text
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
+    return {"status": "healthy"}
+
 
 # WebSocket interview room endpoint
 @app.websocket("/ws/interviews/{interview_id}")
@@ -71,9 +100,10 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
+    logging.getLogger("backend").error("请求处理失败 %s", request.url.path, exc_info=exc)
     return JSONResponse(
         status_code=500,
-        content={"code": 500, "message": f"服务器内部错误: {str(exc)}", "data": None}
+        content={"code": 500, "message": "服务器内部错误，请稍后重试", "data": None}
     )
 
 @app.get("/")

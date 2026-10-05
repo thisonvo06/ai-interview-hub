@@ -17,6 +17,7 @@ class Job(Base):
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=False)
     department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)
     title = Column(String(150), nullable=False)
+    official_apply_url = Column(String(2048), nullable=True)
     category = Column(String(50), default="后端开发", nullable=False)
     city = Column(String(50), nullable=False)
     salary_min = Column(Integer, default=15, nullable=False)  # in k

@@ -1,4 +1,6 @@
 import logging
+import hashlib
+import hmac
 import smtplib
 import uuid
 from datetime import datetime, timedelta
@@ -14,6 +16,7 @@ from app.models.user import User, Role, UserRole
 from app.models.profile import PersonalProfile, CareerPreference, UserCompetency
 from app.models.company import Company, CompanyMember
 from app.models.system import UserSession
+from app.core.deps import oauth2_scheme
 from app.schemas.auth import (
     LoginRequest, TokenResponse, RegisterPersonalRequest,
     RegisterEnterpriseRequest, OnboardingRequest, UserInfoOut,
@@ -46,11 +49,11 @@ def issue_token_with_session(db: Session, user: User, role_codes, company_id=Non
 def _send_reset_email(email: str, reset_token: str) -> bool:
     """发送密码重置邮件；未配置 SMTP 时回退为记录日志并返回 False。"""
     if not (settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_FROM):
-        logger.warning(f"[找回密码] SMTP 未配置，跳过邮件发送。邮箱={email} reset_token={reset_token}")
+        logger.warning("[找回密码] SMTP 未配置，跳过邮件发送")
         return False
 
     subject = "【经纬职引-智面仓】重置您的登录密码"
-    reset_link = f"http://localhost:5173/forgot-password?token={reset_token}"
+    reset_link = f"{settings.FRONTEND_BASE_URL.rstrip('/')}/forgot-password?token={reset_token}"
     body = f"您好，\n\n请点击以下链接重置密码（{RESET_TOKEN_EXPIRE_MINUTES} 分钟内有效）：\n{reset_link}\n\n若非本人操作，请忽略本邮件。"
     try:
         msg = MIMEText(body, "plain", "utf-8")
@@ -104,7 +107,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
         company_id = membership.company_id
 
     access_token = issue_token_with_session(db, user, role_codes, company_id)
-    refresh_token = create_refresh_token(subject=user.id)
+    refresh_token = create_refresh_token(subject=user.id, extra_claims={"jti": decode_token(access_token)["jti"]})
 
     db.commit()
 
@@ -126,18 +129,24 @@ def refresh_token(refresh_token: str, db: Session = Depends(get_db)):
     payload = decode_token(refresh_token)
     if not payload or payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="刷新令牌无效或已过期")
-    user_id = payload.get("sub")
-    user = db.query(User).filter(User.id == int(user_id)).first()
-    if not user or user.status != "ACTIVE":
-        raise HTTPException(status_code=401, detail="用户状态异常")
-
-    role_codes = [r.role_code for r in user.roles]
-    new_access = issue_token_with_session(db, user, role_codes, None)
-    db.commit()
+    try:
+        user_id = int(payload["sub"])
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(401, "刷新令牌无效")
+    session = db.query(UserSession).filter_by(user_id=user_id, jti=payload.get("jti")).first()
+    user = db.get(User, user_id)
+    if not user or user.status != "ACTIVE" or not session or session.revoked_at:
+        raise HTTPException(401, "会话已失效，请重新登录")
+    new_access = create_access_token(user.id, extra_claims={"jti": session.jti,
+        "account_type": user.account_type, "role_codes": [r.role_code for r in user.roles]})
     return ResponseModel(data={"access_token": new_access})
 
 @router.post("/auth/logout", response_model=ResponseModel[dict])
-def logout(current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
+def logout(current_user: User = Depends(require_auth), db: Session = Depends(get_db),
+           token: str = Depends(oauth2_scheme)):
+    payload = decode_token(token)
+    db.query(UserSession).filter_by(user_id=current_user.id, jti=payload["jti"]).update({"revoked_at": datetime.utcnow()})
+    db.commit()
     log_operation(db, current_user.id, current_user.email, current_user.account_type, "USER_LOGOUT", "USER", current_user.id, "用户退出登录")
     return ResponseModel(data={"message": "登出成功"})
 
@@ -193,6 +202,7 @@ def change_password(req: ChangePasswordRequest, current_user: User = Depends(req
 
     current_user.password_hash = get_password_hash(req.new_password)
     current_user.updated_at = datetime.utcnow()
+    db.query(UserSession).filter_by(user_id=current_user.id, revoked_at=None).update({"revoked_at": datetime.utcnow()})
     db.commit()
 
     log_operation(db, current_user.id, current_user.email, current_user.account_type, "CHANGE_PASSWORD", "USER", current_user.id, "用户修改登录密码")
@@ -202,21 +212,16 @@ def change_password(req: ChangePasswordRequest, current_user: User = Depends(req
 def forgot_password(req: ForgotPasswordRequest, db: Session = Depends(get_db)):
     # 防用户枚举：无论邮箱是否存在均返回统一提示
     user = db.query(User).filter(User.email == req.email).first()
-    dev_reset_token: str = None
-    if user:
+    if user and user.status == "ACTIVE":
         reset_token = create_access_token(
             subject=user.id,
             expires_delta=timedelta(minutes=RESET_TOKEN_EXPIRE_MINUTES),
-            extra_claims={"type": "reset", "purpose": "reset_password"}
+            extra_claims={"type": "reset", "purpose": "reset_password",
+                          "password_version": hashlib.sha256(user.password_hash.encode()).hexdigest()}
         )
-        sent = _send_reset_email(req.email, reset_token)
-        if not sent:
-            # 开发/未配置 SMTP 时，将令牌直接返回以便本地联调
-            dev_reset_token = reset_token
+        _send_reset_email(req.email, reset_token)
 
-    data = {"message": "若该邮箱已注册，重置链接已发送，请查收（30 分钟内有效）"}
-    if dev_reset_token:
-        data["dev_reset_token"] = dev_reset_token
+    data = {"message": "若邮箱已注册且邮件服务可用，将收到重置链接（30 分钟内有效）；未收到时请联系管理员"}
     return ResponseModel(data=data)
 
 @router.post("/auth/reset-password", response_model=ResponseModel[dict])
@@ -233,12 +238,20 @@ def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=400, detail="用户不存在")
+    version = payload.get("password_version")
+    if user.status != "ACTIVE" or not isinstance(version, str) or not hmac.compare_digest(
+            version, hashlib.sha256(user.password_hash.encode()).hexdigest()):
+        raise HTTPException(400, "重置链接已失效，请重新申请")
 
     if len(req.new_password) < 6:
         raise HTTPException(status_code=400, detail="密码长度不能少于 6 位")
 
-    user.password_hash = get_password_hash(req.new_password)
-    user.updated_at = datetime.utcnow()
+    changed = db.query(User).filter_by(id=user.id, password_hash=user.password_hash).update(
+        {"password_hash": get_password_hash(req.new_password), "updated_at": datetime.utcnow()}, synchronize_session=False)
+    if changed != 1:
+        db.rollback()
+        raise HTTPException(400, "重置链接已失效，请重新申请")
+    db.query(UserSession).filter_by(user_id=user.id, revoked_at=None).update({"revoked_at": datetime.utcnow()})
     db.commit()
 
     log_operation(db, user.id, user.email, user.account_type, "RESET_PASSWORD", "USER", user.id, "用户通过邮件重置密码")
@@ -295,7 +308,7 @@ def register_personal(req: RegisterPersonalRequest, db: Session = Depends(get_db
     db.commit()
 
     access_token = issue_token_with_session(db, new_user, ["PERSONAL_USER"], None)
-    refresh_token = create_refresh_token(subject=new_user.id)
+    refresh_token = create_refresh_token(subject=new_user.id, extra_claims={"jti": decode_token(access_token)["jti"]})
     db.commit()
 
     log_operation(db, new_user.id, initial_name, "PERSONAL", "USER_REGISTER", "USER", new_user.id, "个人用户完成注册")
@@ -361,7 +374,7 @@ def register_enterprise(req: RegisterEnterpriseRequest, db: Session = Depends(ge
     db.commit()
 
     access_token = issue_token_with_session(db, new_user, ["ENTERPRISE_OWNER"], company.id)
-    refresh_token = create_refresh_token(subject=new_user.id)
+    refresh_token = create_refresh_token(subject=new_user.id, extra_claims={"jti": decode_token(access_token)["jti"]})
     db.commit()
 
     log_operation(db, new_user.id, req.contact_name, "ENTERPRISE", "ENTERPRISE_REGISTER", "COMPANY", company.id, f"企业【{company.name}】注册成功")

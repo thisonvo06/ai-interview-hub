@@ -9,11 +9,18 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+import hashlib
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, update
+from sqlalchemy.exc import IntegrityError
+from app.ai.schemas import AnswerEvalSchema
+from app.services.ai_provenance import ai_context, RUBRIC_VERSION
+from app.services.learning import generate_and_store_learning_plan, resolve_target_job
 
 from app.ai.provider import ai_provider
 from app.core import state_machine
@@ -85,7 +92,8 @@ def get_remaining_seconds(interview: Interview) -> Optional[int]:
     if not interview.started_at:
         return None
     total = (interview.duration_minutes or 30) * 60
-    elapsed = int((datetime.utcnow() - interview.started_at).total_seconds())
+    now = interview.paused_at if interview.status == "PAUSED" and interview.paused_at else datetime.utcnow()
+    elapsed = max(0, int((now - interview.started_at).total_seconds()))
     return max(0, total - elapsed)
 
 
@@ -266,323 +274,321 @@ async def _maybe_followup(
     if interview.plan:
         interview.plan.paper_json = json.dumps(meta, ensure_ascii=False)
         interview.plan.total_questions = interview.total_questions
-    db.commit()
-    db.refresh(fu)
-    db.refresh(interview)
+    db.flush()
     logger.info(f"interview={interview.id} 插入追问（{action}）bank_id={picked.id} seq={fu.seq}")
     return fu
 
 
-async def submit_answer_core(
-    db: Session, interview: Interview, user: User,
-    text: str, duration_sec: Optional[int] = None,
-    skipped: bool = False
-) -> Dict[str, Any]:
-    """当前题作答 → 评分 → 落库 → （可能的追问）→ 推进下一题。REST/WS 共用。"""
-    state_machine.ensure(interview.status, state_machine.ANSWERABLE, "提交作答")
+LEASE_SECONDS = 180
 
-    curr_q = db.query(InterviewQuestion).filter(
-        InterviewQuestion.interview_id == interview.id,
-        InterviewQuestion.seq == interview.current_question_seq
-    ).first()
-    if not curr_q:
-        raise HTTPException(status_code=400, detail="未找到当前题目")
 
-    # 重复提交拦截：当前题已有评分记录则拒绝（409），不再静默覆盖重评
-    existing_answer = db.query(InterviewAnswer).filter(
-        InterviewAnswer.question_id == curr_q.id).first()
-    if existing_answer and existing_answer.evaluation is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"第 {curr_q.seq} 题已完成作答与评分，不能重复提交"
-        )
+def _lease_available():
+    return or_(Interview.processing_token.is_(None),
+               Interview.processing_started_at < datetime.utcnow() - timedelta(seconds=LEASE_SECONDS))
 
-    if interview.status == "READY":
-        interview.status = "IN_PROGRESS"
-        if not interview.started_at:
-            interview.started_at = datetime.utcnow()
-        if not interview.current_question_shown_at:
-            mark_question_shown(interview)
-        db.commit()
-    elif interview.status == "COMPLETED":
-        # 已完成面试重新激活：继续作答、清润旧报告，后续再次结算生成新报告
-        interview.status = "IN_PROGRESS"
-        interview.ended_at = None
-        # 清除旧报告以避免和新作答数据不一致
-        old_report = db.query(InterviewReport).filter(
-            InterviewReport.interview_id == interview.id
-        ).first()
-        if old_report:
-            db.delete(old_report)
-        if not interview.current_question_shown_at:
-            mark_question_shown(interview)
-        db.commit()
 
-    # 服务端单题计时与超时判定（不信任客户端上报；无锚点时退回客户端值）
-    real_duration, overtime_sec, is_overtime = measure_question_usage(
-        interview, curr_q, duration_sec)
-    duration_sec = real_duration
-
-    answer = existing_answer
-    if not answer:
-        # 语音指标未接入真实分析：显式写 0（含义为"未测量"），不再沿用模型默认值 160/2 的假数据
-        answer = InterviewAnswer(
-            question_id=curr_q.id,
-            interview_id=interview.id,
-            user_id=user.id,
-            text=text,
-            duration_sec=duration_sec,
-            speaking_rate=0,
-            filler_count=0
-        )
-        db.add(answer)
-        db.commit()
-        db.refresh(answer)
+def transition_interview(db, interview, action):
+    """REST/WS 共用，处理评分或报告时不允许另一通道改变会话状态。"""
+    db.refresh(interview)
+    allowed = {"start": state_machine.CAN_START, "pause": state_machine.CAN_PAUSE,
+               "resume": state_machine.CAN_RESUME, "abort": state_machine.CAN_ABORT}[action]
+    state_machine.ensure(interview.status, allowed, action)
+    now = datetime.utcnow()
+    values = {"version": interview.version + 1}
+    if action == "pause":
+        values.update(status="PAUSED", paused_at=now)
+    elif action == "abort":
+        values.update(status="CANCELLED", ended_at=now)
     else:
-        # 有答案但无评分（上次评分中断）：允许更新文本重评
-        answer.text = text
-        answer.duration_sec = duration_sec
-        db.commit()
-
-    answer.overtime = is_overtime
-    answer.overtime_sec = overtime_sec
+        values.update(status="IN_PROGRESS")
+        if interview.status == "PAUSED" and interview.paused_at:
+            gap = now - interview.paused_at
+            values.update(paused_at=None)
+            if interview.started_at:
+                values["started_at"] = interview.started_at + gap
+            if interview.current_question_shown_at:
+                values["current_question_shown_at"] = interview.current_question_shown_at + gap
+        else:
+            values["started_at"] = interview.started_at or now
+            values["current_question_shown_at"] = interview.current_question_shown_at or now
+    changed = db.query(Interview).filter(Interview.id == interview.id, Interview.version == interview.version,
+                                        _lease_available()).update(values, synchronize_session=False)
+    if not changed:
+        db.rollback()
+        raise HTTPException(409, "会话正在处理作答或报告，请稍后重试")
     db.commit()
+    db.refresh(interview)
 
-    jd_text, resume_context = load_interview_context(interview, db)
-    is_empty = not (text or "").strip()
-    is_skipped = skipped
-    if is_skipped:
-        # 主动跳过：0 分 + 温和提示，不调用 LLM
-        eval_res = skip_answer_evaluation(curr_q.text)
-    elif is_empty:
-        # 空作答：直接 0 分并明确提示，不消耗 LLM 调用
-        eval_res = empty_answer_evaluation(curr_q.text)
-    else:
-        eval_res = await ai_provider.evaluate_answer(
-            curr_q.text, text, curr_q.seq,
-            jd_text=jd_text or None,
-            resume_context=resume_context or None,
-            reference_points=parse_ref_points(curr_q.reference_points_json)
-        )
 
-    raw_score = eval_res["score"]
-    if not is_empty and is_overtime:
-        # 超时轻扣分（不归零）：空作答已 0 分，无需再扣
-        eval_res["score"] = apply_overtime_penalty(raw_score, overtime_sec)
-        eval_res["evidence"] = list(eval_res.get("evidence") or []) + [
-            f"本题超出建议限时 {overtime_sec} 秒，按超时规则轻扣分 "
-            f"（{raw_score} → {eval_res['score']}），未作答完不直接归零"
-        ]
+def _replay(db, answer):
+    result = json.loads(answer.result_json)
+    next_id = result.pop("next_question_id", None)
+    result["answer"] = answer
+    result["next_question"] = db.get(InterviewQuestion, next_id) if next_id else None
+    if result.get("finished"):
+        interview = db.get(Interview, answer.interview_id)
+        if interview:
+            result["report_state"] = interview.report_state
+            result["report_id"] = interview.report.id if interview.report else None
+    result["replayed"] = True
+    return result
 
-    eval_obj = db.query(AnswerEvaluation).filter(AnswerEvaluation.answer_id == answer.id).first()
-    if not eval_obj:
-        eval_obj = AnswerEvaluation(
-            answer_id=answer.id,
-            interview_id=interview.id,
-            total_score=eval_res["score"],
-            dimensions_json=json.dumps(eval_res["dimensions"], ensure_ascii=False),
+
+async def submit_answer_core(db: Session, interview: Interview, user: User, text: str,
+                             duration_sec: Optional[int] = None, skipped: bool = False,
+                             question_id: int = None, request_id: str = None,
+                             expected_version: int = None) -> Dict[str, Any]:
+    if interview.user_id != user.id:
+        raise HTTPException(403, "无权作答此面试")
+    if not question_id or not request_id:
+        raise HTTPException(422, "提交作答必须携带 question_id 与 request_id")
+    fingerprint = hashlib.sha256(json.dumps([text, skipped], ensure_ascii=False).encode()).hexdigest()
+    curr_q = db.query(InterviewQuestion).filter_by(id=question_id, interview_id=interview.id).first()
+    if not curr_q:
+        raise HTTPException(409, "题目不属于本次面试")
+    request_answer = db.query(InterviewAnswer).filter_by(interview_id=interview.id, request_id=request_id).first()
+    if request_answer and (request_answer.question_id != question_id or request_answer.payload_hash != fingerprint):
+        raise HTTPException(409, "同一请求 ID 不能用于不同题目或不同答案")
+    existing = db.query(InterviewAnswer).filter_by(question_id=question_id).first()
+    if existing and existing.result_json:
+        if existing.request_id != request_id or existing.payload_hash != fingerprint:
+            raise HTTPException(409, "此题已完成作答，请刷新会话获取下一题")
+        return _replay(db, existing)
+    if existing and existing.evaluation:
+        raise HTTPException(409, "此题已有历史评分，不能重复评分")
+    if existing and existing.payload_hash and existing.payload_hash != fingerprint:
+        raise HTTPException(409, "已保存本题答案，请使用原答案和原请求重试")
+    db.refresh(interview)
+    state_machine.ensure(interview.status, state_machine.ANSWERABLE, "提交作答")
+    if curr_q.seq != interview.current_question_seq:
+        raise HTTPException(409, "当前题目已变化，请刷新会话")
+    if expected_version is not None and expected_version != interview.version:
+        raise HTTPException(409, "会话版本已变化，请刷新会话")
+    lease = uuid.uuid4().hex
+    claimed = db.query(Interview).filter(Interview.id == interview.id, Interview.version == interview.version,
+                                         Interview.status == "IN_PROGRESS", _lease_available()).update(
+        {"processing_token": lease, "processing_started_at": datetime.utcnow()}, synchronize_session=False)
+    if not claimed:
+        db.rollback()
+        raise HTTPException(409, "本题正在评分，请使用同一请求 ID 稍后重试")
+    db.commit()
+    answer = existing
+    try:
+        db.refresh(interview)
+        real_duration, overtime_sec, is_overtime = measure_question_usage(interview, curr_q, duration_sec)
+        if not answer:
+            answer = InterviewAnswer(question_id=curr_q.id, interview_id=interview.id, user_id=user.id,
+                                     text=text, duration_sec=real_duration, overtime=is_overtime,
+                                     overtime_sec=overtime_sec, speaking_rate=0, filler_count=0)
+            db.add(answer)
+        answer.request_id, answer.payload_hash = request_id, fingerprint
+        answer.processing_state = "PROCESSING"
+        db.commit()  # 答案先持久化，外部模型调用时不持有数据库写事务。
+        jd_text, resume_context = load_interview_context(interview, db)
+        is_empty = not (text or "").strip()
+        if skipped or is_empty:
+            eval_res = skip_answer_evaluation(curr_q.text) if skipped else empty_answer_evaluation(curr_q.text)
+            provenance = {"source": "RULE", "model": "local-rule", "rubric_version": RUBRIC_VERSION}
+        else:
+            with ai_context(user.id, interview.id, request_id):
+                eval_res = await ai_provider.evaluate_answer(curr_q.text, text, curr_q.seq,
+                    jd_text=jd_text or None, resume_context=resume_context or None,
+                    reference_points=parse_ref_points(curr_q.reference_points_json))
+            provenance = eval_res.pop("_ai_meta", {"source": "UNKNOWN", "model": "unknown"})
+            if interview.type == "ENTERPRISE_RECRUITMENT" and provenance.get("source") != "REAL":
+                raise HTTPException(503, "企业正式面试的模型评分不可用，答案已保存，可稍后重试")
+        eval_res = AnswerEvalSchema.model_validate(eval_res).model_dump()
+        # Rubric 数值由服务端统一加权，模型不能另给一个互相矛盾的总分。
+        weights = {"professional": .30, "relevance": .20, "completeness": .15,
+                   "logic": .15, "depth": .15, "communication": .05}
+        raw_score = round(sum(eval_res["dimensions"][k] * w for k, w in weights.items()), 1)
+        eval_res["score"] = apply_overtime_penalty(raw_score, answer.overtime_sec)
+        eval_res["provenance"] = provenance
+        if answer.overtime:
+            eval_res["evidence"].append(f"超出建议限时 {answer.overtime_sec} 秒，评分由 {raw_score} 调整为 {eval_res['score']}")
+        # 缺题补题也在数据库写事务之前完成。
+        missing_data = None
+        if curr_q.seq < interview.total_questions and not db.query(InterviewQuestion).filter_by(
+                interview_id=interview.id, seq=curr_q.seq + 1).first():
+            with ai_context(user.id, interview.id, request_id):
+                missing_data = await ai_provider.generate_question(job_title=interview.job.title if interview.job else "综合岗位",
+                    seq=curr_q.seq + 1, difficulty=interview.difficulty, last_question=curr_q.text,
+                    last_answer=text, last_score=eval_res["score"], jd_text=jd_text or None)
+        db.expire_all()
+        db.refresh(interview)
+        if interview.processing_token != lease or interview.status != "IN_PROGRESS":
+            raise HTTPException(409, "处理租约已变化，请使用原请求重试")
+        # CAS 获得写锁，阻止过期租约的其他工作线程并发落库。
+        locked = db.query(Interview).filter_by(id=interview.id, processing_token=lease).update(
+            {"processing_started_at": datetime.utcnow()}, synchronize_session=False)
+        if not locked:
+            raise HTTPException(409, "处理租约已变化")
+        evaluation = AnswerEvaluation(answer_id=answer.id, interview_id=interview.id,
+            total_score=eval_res["score"], dimensions_json=json.dumps(eval_res["dimensions"], ensure_ascii=False),
             evidence_json=json.dumps(eval_res["evidence"], ensure_ascii=False),
             weaknesses_json=json.dumps(eval_res["weaknesses"], ensure_ascii=False),
             missing_knowledge_json=json.dumps(eval_res["missing_knowledge"], ensure_ascii=False),
             suggestions_json=json.dumps(eval_res["suggestions"], ensure_ascii=False),
-            next_action=eval_res.get("next_action", "CHANGE_TOPIC")
-        )
-        db.add(eval_obj)
-    else:
-        eval_obj.total_score = eval_res["score"]
-        eval_obj.dimensions_json = json.dumps(eval_res["dimensions"], ensure_ascii=False)
-        eval_obj.evidence_json = json.dumps(eval_res["evidence"], ensure_ascii=False)
-        eval_obj.weaknesses_json = json.dumps(eval_res["weaknesses"], ensure_ascii=False)
-        eval_obj.missing_knowledge_json = json.dumps(eval_res["missing_knowledge"], ensure_ascii=False)
-        eval_obj.suggestions_json = json.dumps(eval_res["suggestions"], ensure_ascii=False)
-        eval_obj.next_action = eval_res.get("next_action", "CHANGE_TOPIC")
-    db.commit()
-
-    # 自适应追问：按评分建议在卷面中插入同技能进阶/基础题
-    followup = await _maybe_followup(db, interview, curr_q, eval_res)
-
-    next_q = None
-    if followup is not None:
-        next_q = followup
-    elif curr_q.seq < interview.total_questions:
-        next_seq = curr_q.seq + 1
-        next_q = db.query(InterviewQuestion).filter(
-            InterviewQuestion.interview_id == interview.id,
-            InterviewQuestion.seq == next_seq
-        ).first()
-        # 极端缺题（卷面被删改）时用 AI 兜底补一题
-        if next_q is None:
-            job_title = interview.job.title if interview.job else "综合岗位"
-            q_data = await ai_provider.generate_question(
-                job_title=job_title, seq=next_seq, difficulty=interview.difficulty,
-                last_question=curr_q.text, last_answer=text, last_score=eval_res["score"],
-                jd_text=jd_text or None, resume_context=resume_context or None
-            )
-            q_text = q_data.get("question") or ""
-            if not q_text:
-                raise HTTPException(status_code=500, detail="下一题缺失且 AI 兜底出题失败")
-            next_q = InterviewQuestion(
-                interview_id=interview.id,
-                parent_question_id=curr_q.id,
-                seq=next_seq,
-                stage=q_data.get("stage") or "专业基础",
-                question_type=q_data.get("question_type") or "PROFESSIONAL",
-                skill_name=q_data.get("skill_name") or job_title,
-                text=q_text,
-                difficulty=q_data.get("difficulty") or interview.difficulty,
-                hints=q_data.get("hints"),
-                time_limit_sec=q_data.get("time_limit_sec") or 180,
-                reference_points_json=json.dumps(
-                    build_ai_reference_points(job_title, q_text), ensure_ascii=False
-                ),
-                source="AI_GENERATED"
-            )
+            next_action=eval_res["next_action"], provenance_json=json.dumps(provenance, ensure_ascii=False))
+        db.add(evaluation)
+        followup = await _maybe_followup(db, interview, curr_q, eval_res)
+        next_q = followup or db.query(InterviewQuestion).filter_by(interview_id=interview.id, seq=curr_q.seq + 1).first()
+        if next_q is None and curr_q.seq < interview.total_questions:
+            if not missing_data or not missing_data.get("question"):
+                raise HTTPException(503, "下一题生成失败，答案已保存，请重试")
+            next_q = InterviewQuestion(interview_id=interview.id, seq=curr_q.seq + 1,
+                text=missing_data["question"], skill_name=missing_data["skill_name"], stage=missing_data["stage"],
+                difficulty=missing_data["difficulty"], question_type=missing_data.get("question_type") or "PROFESSIONAL",
+                source="AI_GENERATED", time_limit_sec=missing_data.get("time_limit_sec") or 180)
             db.add(next_q)
-            db.commit()
-            db.refresh(next_q)
-
-    if next_q is not None:
-        interview.current_question_seq = next_q.seq
-        mark_question_shown(interview)  # 新题呈现，单题计时重新开始
+        db.flush()
+        finished = next_q is None
+        if finished:
+            interview.status, interview.ended_at = "COMPLETED", datetime.utcnow()
+            interview.current_question_shown_at = None
+            interview.report_state = "PENDING"
+        else:
+            interview.current_question_seq = next_q.seq
+            mark_question_shown(interview)
+        interview.version += 1
+        interview.processing_token, interview.processing_started_at = None, None
+        result = {"eval_res": eval_res, "next_question_id": next_q.id if next_q else None,
+                  "is_followup": followup is not None, "finished": finished, "report_id": None,
+                  "report_state": interview.report_state, "version": interview.version,
+                  "total_questions": interview.total_questions, "raw_score": raw_score,
+                  "overtime": answer.overtime, "overtime_sec": answer.overtime_sec,
+                  "is_empty": is_empty, "is_skipped": skipped, "remaining_seconds": get_remaining_seconds(interview)}
+        answer.processing_state = "COMPLETED"
+        answer.result_json = json.dumps(result, ensure_ascii=False)
+        db.commit()  # 评分、追问、推进和幂等响应一次提交。
+    except Exception:
+        db.rollback()
+        released = db.query(Interview).filter_by(id=interview.id, processing_token=lease).update(
+            {"processing_token": None, "processing_started_at": None}, synchronize_session=False)
+        if released and answer is not None:
+            db.query(InterviewAnswer).filter_by(id=answer.id, processing_state="PROCESSING").update({"processing_state": "FAILED"})
         db.commit()
-
-    finished = next_q is None
-    report_id = None
+        raise
     if finished:
-        interview.current_question_shown_at = None
-        interview.status = "COMPLETED"
-        interview.ended_at = datetime.utcnow()
+        try:
+            report = await finalize_interview(db, interview, user)
+            result["report_id"] = report.id
+        except Exception:
+            logger.exception("报告生成失败，保留已提交作答，等待重试")
+        db.refresh(interview)
+        result["report_state"] = interview.report_state
+        answer.result_json = json.dumps(result, ensure_ascii=False)
         db.commit()
-        # 最后一题答完自动生成报告（前端直接跳报告页即可看到真实结算）
-        rep = await finalize_interview(db, interview, user, force=False)
-        report_id = rep.id
-
-    return {
-        "answer": answer,
-        "eval_res": eval_res,
-        "next_question": next_q,
-        "is_followup": followup is not None and next_q is followup,
-        "finished": finished,
-        "report_id": report_id,
-        "raw_score": raw_score,
-        "overtime": is_overtime,
-        "overtime_sec": overtime_sec,
-        "is_empty": is_empty,
-        "is_skipped": is_skipped,
-        "remaining_seconds": get_remaining_seconds(interview),
-    }
+    return _replay(db, answer)
 
 
-async def finalize_interview(
-    db: Session, interview: Interview, user: User,
-    force: bool = False
-) -> InterviewReport:
-    """结算面试并生成报告（REST finish 与答题自动结算共用）。
+def aggregate_scores(questions):
+    """按题目难度加权，追问同属其实际技能，排除跳过项的能力证据。"""
+    items = [(q, q.answer.evaluation) for q in questions if q.answer and q.answer.evaluation]
+    weights = {"EASY": 1.0, "MEDIUM": 1.2, "HARD": 1.5}
+    total_weight = sum(weights.get(q.difficulty, 1.2) for q, _ in items)
+    total = round(sum(e.total_score * weights.get(q.difficulty, 1.2) for q, e in items) / total_weight, 1)
+    dimension_keys = {"专业基础": "professional", "相关性": "relevance", "完整性": "completeness",
+                      "逻辑结构": "logic", "实践深度": "depth", "沟通表达": "communication"}
+    dimensions = {label: round(sum(json.loads(e.dimensions_json).get(key, 0) * weights.get(q.difficulty, 1.2)
+                                  for q, e in items) / total_weight, 1) for label, key in dimension_keys.items()}
+    by_skill = {}
+    for q, e in items:
+        source = json.loads(e.provenance_json or "{}").get("source", "UNKNOWN")
+        if source not in ("REAL", "RULE") or not (q.answer.text or "").strip():
+            continue
+        by_skill.setdefault(q.skill_name, []).append((q, e, weights.get(q.difficulty, 1.2)))
+    return total, dimensions, by_skill
 
-    - 幂等：已 COMPLETED 且有报告 → 直接返回既有报告；
-    - 未答完且非 force → 409（提示走中止）；
-    - 完全无作答 → 409，不再生成写死的 82 分假报告；
-    - 能力沉淀按最后作答技能（无则岗位名）记录，不再写死 "Redis"。
-    """
-    if interview.status == "COMPLETED" and interview.report:
-        return interview.report
 
-    answered = db.query(AnswerEvaluation).filter(
-        AnswerEvaluation.interview_id == interview.id).count()
-    if not force:
-        if answered < (interview.total_questions or 0):
-            raise HTTPException(
-                status_code=409,
-                detail=f"还有 {interview.total_questions - answered} 题未作答；如需提前结束请中止面试"
-            )
-    else:
-        state_machine.ensure_not_terminal(interview.status, "提前交卷")
-        state_machine.ensure(interview.status, state_machine.CAN_FINISH, "提前交卷")
-
-    all_evals = db.query(AnswerEvaluation).filter(
-        AnswerEvaluation.interview_id == interview.id).all()
-    if not all_evals:
-        raise HTTPException(status_code=409, detail="尚无任何作答记录，无法生成面试报告")
-
-    scores = [e.total_score for e in all_evals]
-    job_title = interview.job.title if interview.job else "综合岗位"
-    jd_text, resume_context = load_interview_context(interview, db)
-    qa_pairs = []
-    for q in sorted(interview.questions, key=lambda x: x.seq):
-        if q.answer and q.answer.evaluation:
-            qa_pairs.append({
-                "seq": q.seq,
-                "question": q.text,
-                "answer": q.answer.text,
-                "score": q.answer.evaluation.total_score
-            })
-    report_data = await ai_provider.generate_report(
-        interview.id, interview.total_questions, scores,
-        qa_pairs=qa_pairs or None,
-        job_title=job_title
-    )
-
-    rep = db.query(InterviewReport).filter(
-        InterviewReport.interview_id == interview.id).first()
-    if not rep:
-        rep = InterviewReport(
-            interview_id=interview.id,
-            user_id=user.id,
-            total_score=report_data["total_score"],
-            performance_level=report_data["performance_level"],
-            dimension_scores_json=json.dumps(report_data["dimension_scores"], ensure_ascii=False),
-            strengths_json=json.dumps(report_data["strengths"], ensure_ascii=False),
-            weaknesses_json=json.dumps(report_data["weaknesses"], ensure_ascii=False),
-            suggestions_json=json.dumps(report_data["suggestions"], ensure_ascii=False),
-            summary=report_data["summary"],
-            status="COMPLETED"
-        )
-        db.add(rep)
-    else:
-        rep.total_score = report_data["total_score"]
-        rep.performance_level = report_data["performance_level"]
-        rep.dimension_scores_json = json.dumps(report_data["dimension_scores"], ensure_ascii=False)
-        rep.strengths_json = json.dumps(report_data["strengths"], ensure_ascii=False)
-        rep.weaknesses_json = json.dumps(report_data["weaknesses"], ensure_ascii=False)
-        rep.suggestions_json = json.dumps(report_data["suggestions"], ensure_ascii=False)
-        rep.summary = report_data["summary"]
-        rep.status = "COMPLETED"
-
-    # 能力沉淀：使用最后作答技能（真实），不再写死 Redis
-    last_q = (db.query(InterviewQuestion)
-              .filter(InterviewQuestion.interview_id == interview.id)
-              .order_by(InterviewQuestion.seq.desc()).first())
-    comp_name = (last_q.skill_name if last_q and last_q.skill_name else job_title) or job_title
-
-    db.add(CompetencyHistory(
-        user_id=user.id,
-        competency_name=comp_name,
-        score=report_data["total_score"],
-        source_type="INTERVIEW",
-        source_id=interview.id
-    ))
-    u_comp = db.query(UserCompetency).filter(
-        UserCompetency.user_id == user.id,
-        UserCompetency.competency_name == comp_name
-    ).first()
-    if u_comp:
-        u_comp.score = report_data["total_score"]
-    else:
-        db.add(UserCompetency(user_id=user.id, competency_name=comp_name,
-                              score=report_data["total_score"]))
-
-    interview.status = "COMPLETED"
-    interview.ended_at = interview.ended_at or datetime.utcnow()
+async def finalize_interview(db: Session, interview: Interview, user: User, force: bool = False) -> InterviewReport:
+    if interview.user_id != user.id:
+        raise HTTPException(403, "无权生成此面试报告")
+    db.refresh(interview)
+    rep = db.query(InterviewReport).filter_by(interview_id=interview.id).first()
+    if rep and interview.learning_state in ("COMPLETED", "UNKNOWN"):
+        return rep
+    if interview.status in ("CANCELLED", "EXPIRED"):
+        raise HTTPException(409, "面试已中止或过期，无法结算")
+    evaluations = db.query(AnswerEvaluation).filter_by(interview_id=interview.id).all()
+    if not evaluations:
+        raise HTTPException(409, "尚无评分记录，无法生成报告")
+    if not force and len(evaluations) < interview.total_questions:
+        raise HTTPException(409, "还有题目未作答")
+    lease = uuid.uuid4().hex
+    claimed = db.query(Interview).filter(Interview.id == interview.id, _lease_available()).update(
+        {"processing_token": lease, "processing_started_at": datetime.utcnow(),
+         "report_state": "PROCESSING" if not rep else "COMPLETED"}, synchronize_session=False)
+    if not claimed:
+        db.rollback()
+        raise HTTPException(409, "报告或答案正在处理，请稍后重试")
     db.commit()
-
-    # 学习路线联动（函数内 import 避免循环依赖）
-    from app.api.v1.personal import generate_and_store_learning_plan, resolve_target_job
-    target_job_title = resolve_target_job(user)
-    await generate_and_store_learning_plan(
-        db, user, target_job_title,
-        jd_text=jd_text or None,
-        gaps=report_data.get("weaknesses"),
-        replace=True
-    )
-    db.commit()
-    return rep
+    try:
+        jd_text, _ = load_interview_context(interview, db)
+        if not rep:
+            db.expire_all()
+            questions = db.query(InterviewQuestion).filter_by(interview_id=interview.id).order_by(InterviewQuestion.seq).all()
+            total, dimensions, by_skill = aggregate_scores(questions)
+            qa_pairs = [{"seq": q.seq, "question": q.text, "answer": q.answer.text,
+                         "score": q.answer.evaluation.total_score} for q in questions if q.answer and q.answer.evaluation]
+            with ai_context(user.id, interview.id, "report-" + lease):
+                report_data = await ai_provider.generate_report(interview.id, interview.total_questions,
+                    [e.total_score for e in evaluations], qa_pairs=qa_pairs, job_title=interview.job.title if interview.job else "综合岗位")
+            provenance = report_data.get("_ai_meta", {"source": "UNKNOWN"})
+            if interview.type == "ENTERPRISE_RECRUITMENT" and provenance.get("source") != "REAL":
+                raise HTTPException(503, "正式面试的报告生成暂不可用，请稍后重试")
+            provenance["score_source"] = "WEIGHTED_ANSWER_EVALUATIONS"
+            provenance["answer_sources"] = sorted({json.loads(e.provenance_json or "{}").get("source", "UNKNOWN") for e in evaluations})
+            provenance["difficulty_weights"] = {"EASY": 1, "MEDIUM": 1.2, "HARD": 1.5}
+            db.expire_all()
+            locked = db.query(Interview).filter_by(id=interview.id, processing_token=lease).update(
+                {"processing_started_at": datetime.utcnow()}, synchronize_session=False)
+            if not locked:
+                raise HTTPException(409, "报告处理租约已变化，请重试")
+            rep = InterviewReport(interview_id=interview.id, user_id=user.id, total_score=total,
+                performance_level="优秀" if total >= 85 else "表现良好" if total >= 70 else "待提升",
+                dimension_scores_json=json.dumps(dimensions, ensure_ascii=False),
+                strengths_json=json.dumps(report_data["strengths"], ensure_ascii=False),
+                weaknesses_json=json.dumps(report_data["weaknesses"], ensure_ascii=False),
+                suggestions_json=json.dumps(report_data["suggestions"], ensure_ascii=False), summary=report_data["summary"],
+                provenance_json=json.dumps(provenance, ensure_ascii=False), status="COMPLETED")
+            db.add(rep)
+            for skill, evidence in by_skill.items():
+                weight = sum(w for _, _, w in evidence)
+                score = round(sum(e.total_score * w for _, e, w in evidence) / weight, 1)
+                db.add(CompetencyHistory(user_id=user.id, competency_name=skill, score=score,
+                    source_type="INTERVIEW", source_id=interview.id,
+                    evidence_json=json.dumps({"question_ids": [q.id for q, _, _ in evidence],
+                                              "evaluation_ids": [e.id for _, e, _ in evidence],
+                                              "sample_count": len(evidence), "rubric_version": RUBRIC_VERSION})))
+                comp = db.query(UserCompetency).filter_by(user_id=user.id, competency_name=skill).first()
+                if not comp:
+                    comp = UserCompetency(user_id=user.id, competency_name=skill)
+                    db.add(comp)
+                comp.score, comp.confidence = score, round(min(.95, len(evidence) / 5), 2)
+            db.refresh(interview)
+            interview.status, interview.report_state = "COMPLETED", "COMPLETED"
+            interview.ended_at = interview.ended_at or datetime.utcnow()
+            interview.version += 1
+            db.commit()
+        # 学习路线是独立可恢复步骤：不删除已完成任务，不重复评分或能力证据。
+        db.query(Interview).filter_by(id=interview.id, processing_token=lease).update({"learning_state": "PROCESSING"})
+        db.commit()
+        await generate_and_store_learning_plan(db, user, resolve_target_job(user), jd_text=jd_text or None,
+                                               gaps=json.loads(rep.weaknesses_json), replace=False)
+        db.query(Interview).filter_by(id=interview.id, processing_token=lease).update(
+            {"learning_state": "COMPLETED", "processing_token": None, "processing_started_at": None})
+        db.commit()
+        return rep
+    except Exception:
+        db.rollback()
+        has_report = db.query(InterviewReport).filter_by(interview_id=interview.id).first()
+        db.query(Interview).filter_by(id=interview.id, processing_token=lease).update(
+            {"report_state": "COMPLETED" if has_report else "FAILED",
+             "learning_state": "FAILED" if has_report else "PENDING",
+             "processing_token": None, "processing_started_at": None}, synchronize_session=False)
+        db.commit()
+        if has_report:
+            logger.exception("学习路线生成失败，报告已保存，可重试学习步骤")
+            return has_report
+        raise

@@ -10,7 +10,7 @@
           </div>
           <div class="overall-badge">
             <span class="lbl">胜任力契合指数</span>
-            <span class="num">{{ assessmentData.overall_score }}</span>
+            <span class="num">{{ assessmentData.overall_score ?? '未测量' }}</span>
           </div>
         </div>
 
@@ -63,12 +63,12 @@
             <el-table-column prop="name" label="能力维度 / 考察点" min-width="150" />
             <el-table-column prop="current_score" label="当前掌握得分" width="130">
               <template #default="{ row }">
-                <strong style="color: #2563EB;">{{ row.current_score }} 分</strong>
+                <strong style="color: #2563EB;">{{ row.current_score ?? '未测量' }}</strong>
               </template>
             </el-table-column>
             <el-table-column prop="required_score" label="岗位基准要求" width="130">
               <template #default="{ row }">
-                {{ row.required_score }} 分
+                {{ row.required_score ?? '未设定' }}
               </template>
             </el-table-column>
             <el-table-column prop="weight" label="岗位权重" width="110">
@@ -78,7 +78,8 @@
             </el-table-column>
             <el-table-column prop="gap" label="差距" width="100">
               <template #default="{ row }">
-                <el-tag v-if="row.gap > 0" type="danger" size="small">-{{ row.gap }}</el-tag>
+                <el-tag v-if="row.gap == null" type="info" size="small">未测量</el-tag>
+                <el-tag v-else-if="row.gap > 0" type="danger" size="small">-{{ row.gap }}</el-tag>
                 <el-tag v-else type="success" size="small">达标</el-tag>
               </template>
             </el-table-column>

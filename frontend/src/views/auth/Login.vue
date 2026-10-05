@@ -71,9 +71,9 @@
           </div>
 
           <!-- AI Engine Not Configured: setup wizard hint -->
-          <div v-if="aiNotConfigured" class="ai-setup-banner" @click="router.push('/ai-setup')">
+          <div v-if="aiNotConfigured" class="ai-setup-banner">
             <el-icon :size="16" color="#D97706"><WarningFilled /></el-icon>
-            <span>AI 引擎尚未配置，点击配置您的 API Key →</span>
+            <span>当前为演示模式，真实 AI 服务由平台管理员配置</span>
           </div>
 
           <!-- Recently Used Accounts (saved locally, password never stored) -->

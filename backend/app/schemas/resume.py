@@ -1,5 +1,5 @@
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 
 class EducationItem(BaseModel):
@@ -69,6 +69,7 @@ class ResumeAIParseResult(BaseModel):
     warnings: List[str] = []
 
 class ResumeAIOptimizeResult(BaseModel):
+    provenance: dict = Field(default_factory=dict)
     completeness_score: int
     strengths: List[str]
     improvements: List[str]
@@ -76,5 +77,6 @@ class ResumeAIOptimizeResult(BaseModel):
     keyword_enrichment: List[str]
 
 class ResumeOptimizeApplyResult(BaseModel):
+    provenance: dict = Field(default_factory=dict)
     resume: ResumeOut
     changes: List[str] = []

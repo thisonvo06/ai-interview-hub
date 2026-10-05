@@ -5,6 +5,7 @@
         <!-- Welcome & Target & Today Tasks Unified Hero (Mockup 06) -->
         <div class="welcome-header zh-card">
           <div class="welcome-left">
+            <p class="editorial-kicker">YOUR NEXT CHAPTER / 你的成长手记</p>
             <h2 class="welcome-title">你好，{{ dashboardData.welcome?.name || '同学' }}</h2>
             <div class="target-badge-row">
               <span class="target-title-pill">
@@ -18,7 +19,7 @@
             </div>
             <div class="welcome-action-buttons">
               <router-link to="/personal/interviews/create">
-                <el-button type="primary" size="large" class="hero-start-btn">开始模拟面试 →</el-button>
+                <el-button type="primary" size="large" class="hero-start-btn">写下新的进步 ↗</el-button>
               </router-link>
               <router-link to="/personal/growth">
                 <el-button size="large" class="hero-report-btn">查看成长报告</el-button>
@@ -30,39 +31,17 @@
           <div class="readiness-center-col">
             <div class="readiness-ring-wrap">
               <span class="ring-percent">{{ dashboardData.readiness_score != null ? dashboardData.readiness_score + '%' : '--' }}</span>
-              <span class="ring-label">当前岗位准备度</span>
+              <span class="ring-label">训练准备参考</span>
             </div>
           </div>
 
-          <!-- Today Core Tasks Right Column -->
-          <div class="welcome-right-tasks">
-            <div class="tasks-mini-header">
-              <span class="tasks-mini-title">今日核心训练任务</span>
-              <router-link to="/personal/learning" class="tasks-all-link">全部路线 →</router-link>
-            </div>
-            <div class="tasks-mini-list">
-              <div v-if="!(dashboardData.today_tasks || []).length" class="mini-task-empty">
-                暂无训练任务，<router-link to="/personal/learning">生成学习路线 →</router-link>
-              </div>
-              <div
-                v-for="(task, idx) in (dashboardData.today_tasks || []).slice(0, 2)"
-                :key="task.id"
-                class="mini-task-item"
-              >
-                <div class="mini-task-badge">{{ Number(idx) + 1 }}</div>
-                <div class="mini-task-content">
-                  <span class="mini-task-title">{{ task.title }}</span>
-                  <div class="mini-task-tags">
-                    <el-tag size="small" :type="task.priority === 'HIGH' ? 'danger' : 'warning'">
-                      {{ task.priority === 'HIGH' ? '重点突破' : '进阶巩固' }}
-                    </el-tag>
-                    <span v-if="task.status === 'COMPLETED'" class="task-done-badge">已打卡</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
+
+        <router-link to="/personal/job-search" class="job-plan-entry">
+          <span class="plan-entry-number">01 / OPPORTUNITY NOTEBOOK</span>
+          <div><h3>给下一站，写一份求职计划</h3><p>收集职位要求，分析技能交集，准备表达，再记录进展。</p></div>
+          <span class="plan-entry-arrow">打开求职手记 ↗</span>
+        </router-link>
 
         <!-- 4 Lightweight Metric Cards -->
         <div class="metrics-row">
@@ -73,7 +52,7 @@
               <div class="m-val-row">
                 <span class="m-val">{{ dashboardData.metrics?.recent_interview_score ?? '--' }}</span>
                 <span v-if="dashboardData.metrics?.recent_interview_score != null" class="m-unit">分</span>
-                <span v-if="dashboardData.metrics?.recent_interview_score != null" class="m-trend text-green">↑ 良好</span>
+
               </div>
             </div>
           </div>
@@ -81,11 +60,11 @@
           <div class="metric-card zh-card">
             <div class="m-icon bg-green"><el-icon><Document /></el-icon></div>
             <div class="m-content">
-              <span class="m-lbl">已投递岗位</span>
+              <span class="m-lbl">已确认官网投递</span>
               <div class="m-val-row">
                 <span class="m-val">{{ dashboardData.metrics?.applied_count || 0 }}</span>
                 <span class="m-unit">个</span>
-                <span class="m-trend text-blue">同步企业中</span>
+                <span class="m-trend text-blue">用户记录</span>
               </div>
             </div>
           </div>
@@ -210,17 +189,17 @@
                   <el-tag size="small" :type="getStatusTag(app.status)">
                     {{ getStatusText(app.status) }}
                   </el-tag>
-                  <span class="app-date">{{ app.updated_at }}</span>
+                  <span class="app-date">{{ formatProgressDate(app.updated_at) }}</span>
                 </div>
               </div>
             </div>
-            <el-empty v-else description="暂无求职申请，赶快前往岗位广场投递吧" />
+            <el-empty v-else description="暂无官网投递笔记，前往岗位广场查看招聘入口" />
           </div>
 
           <!-- Recommended Jobs -->
           <div class="zh-card">
             <div class="card-header">
-              <h3 class="card-title">高匹配推荐职位</h3>
+              <h3 class="card-title">适合探索的职位</h3>
               <router-link to="/personal/jobs">
                 <el-button link type="primary">岗位探索 →</el-button>
               </router-link>
@@ -239,7 +218,7 @@
                 </div>
                 <div class="rec-job-side">
                   <span class="rec-salary">{{ job.salary_min }}-{{ job.salary_max }}K</span>
-                  <span class="match-pill">{{ job.match_score }}% 匹配</span>
+                  <span class="match-pill">{{ job.match_score == null ? '技能覆盖未测量' : job.match_score + '% 技能覆盖' }}</span>
                 </div>
               </div>
             </div>
@@ -264,6 +243,7 @@ const dashboardData = ref<any>(null)
 
 const growthX = computed(() => dashboardData.value?.growth_chart?.map((i: any) => i.date) ?? [])
 const growthY = computed(() => dashboardData.value?.growth_chart?.map((i: any) => i.score) ?? [])
+const formatProgressDate = (value: string) => new Date(value).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
 
 const loadDashboard = async () => {
   loading.value = true
@@ -281,7 +261,7 @@ const loadDashboard = async () => {
 const handleCompleteTask = async (taskId: number) => {
   try {
     await personalApi.completeTask(taskId)
-    ElMessage.success('任务已标记为完成！准备度提升')
+    ElMessage.success('任务已标记为完成')
     loadDashboard()
   } catch (err: any) {
     ElMessage.error(err.response?.data?.detail || '任务打卡失败')
@@ -290,6 +270,10 @@ const handleCompleteTask = async (taskId: number) => {
 
 const getStatusText = (status: string) => {
   const map: Record<string, string> = {
+    LINK_OPENED: '已打开官网',
+    USER_SUBMITTED: '官网已投递',
+    INTERVIEWING: '面试中（用户记录）',
+    CLOSED: '已结束',
     SUBMITTED: '已投递',
     VIEWED: '企业已查看',
     AI_SCREENING: 'AI评估中',
@@ -317,6 +301,10 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.job-plan-entry { display: flex; align-items: center; gap: 24px; padding: 25px 24px; background: #edf1e7; border: 1px solid #dbe2d2; border-radius: 4px; color: #476443; text-decoration: none; margin: 20px 0 24px; }
+.plan-entry-number { font-size: 9px; letter-spacing: 1px; line-height: 1.9; max-width: 150px; color: #90a07f; }
+.job-plan-entry > div { flex: 1; min-width: 0; }.job-plan-entry h3 { font-family: 'Songti SC', 'SimSun', serif; font-size: 22px; font-weight: 500; margin: 0 0 7px; }.job-plan-entry p { font-size: 11px; line-height: 1.8; color: #849578; margin: 0; }.plan-entry-arrow { font-size: 11px; color: #54794e; white-space: nowrap; }
+@media (max-width: 600px) { .job-plan-entry { flex-wrap: wrap; padding: 22px; gap: 13px; }.plan-entry-number { width: 100%; max-width: none; }.job-plan-entry > div { flex-basis: 100%; }.job-plan-entry h3 { font-size: 21px; }.plan-entry-arrow { margin-top: 3px; } }
 .dashboard-view {
   display: flex;
   flex-direction: column;

@@ -1,10 +1,11 @@
 <template>
   <div class="job-square-page">
     <div class="zh-page-container">
+      <p class="editorial-kicker">THE NEXT CHAPTER / 岗位探索</p>
       <!-- Top Title Area -->
       <div class="square-title-row">
         <h1 class="page-main-title">岗位广场</h1>
-        <span class="page-subtitle">汇聚一线名企在招技术与管理职位，智能胜任力匹配</span>
+        <span class="page-subtitle">新的可能，值得认真了解。发现岗位，前往企业官网完成投递。</span>
       </div>
 
       <!-- Prominent Search Bar (Appendix A.2) -->
@@ -95,7 +96,7 @@
 
           <div class="sidebar-tip-box">
             <div class="tip-badge">AI 智能匹配</div>
-            <p class="tip-text">完善在线简历，即可由 AI 算法秒级计算所有岗位的胜任力匹配度与技能差距。</p>
+            <p class="tip-text">整理简历中的技能，看看它们与岗位要求有哪些交集。</p>
             <router-link to="/personal/resumes">
               <el-button link type="primary" size="small">去完善简历 →</el-button>
             </router-link>
@@ -129,7 +130,7 @@
             </div>
 
             <div class="toolbar-right">
-              <span class="total-badge">共找到 <strong>{{ total }}</strong> 个真实在招岗位</span>
+              <span class="total-badge">共找到 <strong>{{ total }}</strong> 个已发布岗位</span>
               <el-button v-if="hasActiveFilter" link type="primary" size="small" @click="resetFilters">
                 清空筛选
               </el-button>

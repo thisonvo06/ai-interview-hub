@@ -1,16 +1,16 @@
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel
+from typing import Optional, List, Dict, Any, Literal
+from pydantic import BaseModel, Field
 from datetime import datetime
 
 class InterviewCreate(BaseModel):
     job_id: Optional[int] = None
     resume_id: Optional[int] = None
     application_id: Optional[int] = None
-    type: str = "PERSONAL_TRAINING" # PERSONAL_TRAINING, ENTERPRISE_RECRUITMENT
+    type: Literal["PERSONAL_TRAINING", "ENTERPRISE_RECRUITMENT"] = "PERSONAL_TRAINING"
     mode: str = "COMPREHENSIVE"     # COMPREHENSIVE, TECHNICAL, PROJECT_DEEP_DIVE, BEHAVIORAL, STRESS
     difficulty: str = "MEDIUM"      # EASY, MEDIUM, HARD
-    total_questions: int = 5
-    duration_minutes: int = 30
+    total_questions: int = Field(default=5, ge=1, le=30)
+    duration_minutes: int = Field(default=30, ge=1, le=180)
     jd_text: Optional[str] = None   # 用户输入的/自动带出的岗位 JD 文本
     use_question_bank: bool = True  # 是否优先从结构化题库组卷（关闭则全部 AI 实时生成）
     selected_bank_ids: Optional[List[int]] = None  # 按已预览确认的考卷出题（题库题目 ID，按顺序）
@@ -57,6 +57,9 @@ class PaperPreviewOut(BaseModel):
     questions: List[PaperPreviewItem] = []
 
 class InterviewOut(BaseModel):
+    version: int = 0
+    report_state: str = "PENDING"
+    learning_state: str = "PENDING"
     id: int
     user_id: int
     company_id: Optional[int] = None
@@ -79,13 +82,19 @@ class InterviewOut(BaseModel):
     current_question: Optional[InterviewQuestionOut] = None
 
 class InterviewAnswerRequest(BaseModel):
-    text: str
+    question_id: int = Field(gt=0)
+    request_id: str = Field(min_length=8, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
+    expected_version: Optional[int] = Field(default=None, ge=0)
+    text: str = Field(max_length=20000)
     # 用时由服务端按呈现时间锚点计算，客户端值仅作无锚点时的回退
     duration_sec: Optional[int] = None
     skipped: bool = False  # 主动跳过本题（不同于空作答，不产生严厉评语）
     # 语音链路未接入：不再接收客户端假指标（speaking_rate/filler_count 已移除）
 
 class AnswerEvaluationOut(BaseModel):
+    provenance: Dict[str, Any] = {}
+    version: int = 0
+    report_state: str = "PENDING"
     answer_id: int
     total_score: float
     dimensions: Dict[str, float]
@@ -108,6 +117,8 @@ class AnswerEvaluationOut(BaseModel):
     is_skipped: bool = False  # 主动跳过，评语温和不影响能力画像
 
 class InterviewReportOut(BaseModel):
+    provenance: Dict[str, Any] = {}
+    learning_state: str = "PENDING"
     id: int
     interview_id: int
     user_id: int

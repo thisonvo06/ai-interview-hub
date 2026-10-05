@@ -17,12 +17,13 @@
         首次分析需要 10-20 秒，AI 正在逐项诊断中，请耐心等待。
       </p>
       <p v-if="aiElapsed >= 20" class="ai-loading-warn">
-        仍在分析中——如果持续超时，可在「AI 服务」中将模式切换为 MOCK 以获得即时结果。
+        仍在分析中，如持续超时可稍后重试或联系管理员检查 AI 服务。
       </p>
     </div>
 
     <StateContainer :loading="loading" :error="error" @retry="loadAnalysis">
       <div v-if="analysis" class="analysis-container">
+        <el-alert v-if="analysis.provenance?.source !== 'REAL'" title="当前建议来自模拟数据或回退，仅用于演示诊断流程。" type="warning" :closable="false" />
         <!-- Top Score Bar -->
         <div class="header-card zh-card">
           <div class="head-left">
@@ -34,7 +35,7 @@
               <span class="num">{{ analysis.completeness_score }}</span>
               <span class="unit">分</span>
             </div>
-            <span class="score-lbl">综合质量评级</span>
+            <span class="score-lbl">内容完善度</span>
           </div>
         </div>
 

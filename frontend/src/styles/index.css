@@ -5,28 +5,28 @@
 
 :root {
   /* Brand Palette - 天蓝 / 浅蓝 / 灰 主题（和原版深蓝拉开明显差距） */
-  --zh-primary: #0EA5E9;
-  --zh-primary-hover: #0284C7;
-  --zh-primary-light: #E0F2FE;
-  --zh-primary-lighter: #F0F9FF;
-  --zh-primary-focus: rgba(14, 165, 233, 0.15);
+  --zh-primary: #246657;
+  --zh-primary-hover: #194d42;
+  --zh-primary-light: #e8f0e9;
+  --zh-primary-lighter: #f1f5ef;
+  --zh-primary-focus: rgba(36, 102, 87, 0.12);
 
   /* Backgrounds - 蓝灰色系 */
-  --zh-bg: #EEF3F8;
+  --zh-bg: #f8f8f3;
   --zh-card-bg: #FFFFFF;
-  --zh-sub-bg: #F0F5FA;
+  --zh-sub-bg: #f0f2eb;
   --zh-gray-bg: #F8FAFC;
 
   /* Typography Colors - 深灰蓝 */
-  --zh-text-title: #0F172A;
-  --zh-text-body: #334155;
-  --zh-text-muted: #64748B;
+  --zh-text-title: #223a34;
+  --zh-text-body: #45564f;
+  --zh-text-muted: #76817b;
   --zh-text-light: #94A3B8;
 
   /* Borders & Dividers - 灰蓝色 */
-  --zh-border: #D6E0EC;
-  --zh-border-light: #E8EEF5;
-  --zh-border-blue: #7DD3FC;
+  --zh-border: #dce1d8;
+  --zh-border-light: #e8ebe3;
+  --zh-border-blue: #99b5a7;
 
   /* Semantic Status Colors */
   --zh-success: #10B981;
@@ -37,9 +37,9 @@
   --zh-danger-light: #FEF2F2;
 
   /* Strict Radii Spec */
-  --zh-radius-btn: 8px;
-  --zh-radius-input: 10px;
-  --zh-radius-card: 12px;
+  --zh-radius-btn: 4px;
+  --zh-radius-input: 6px;
+  --zh-radius-card: 8px;
   --zh-radius-box: 16px;
 
   /* Border-First Elevation */
@@ -48,6 +48,7 @@
   --zh-shadow-hover: 0 6px 24px rgba(15, 35, 71, 0.06);
 
   /* Typography Stack */
+  --zh-font-editorial: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif;
   --zh-font: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, sans-serif;
 }
 

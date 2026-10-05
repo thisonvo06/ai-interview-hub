@@ -110,6 +110,9 @@ class AICallLog(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, nullable=True)
     business_type = Column(String(100), nullable=False) # RESUME_PARSE, QUESTION_GEN, EVALUATE, REPORT_GEN, JD_PARSE
+    business_id = Column(Integer, nullable=True)
+    request_id = Column(String(64), nullable=True)
+    result_source = Column(String(30), default="UNKNOWN", nullable=False)
     model = Column(String(50), default="mock-ai", nullable=False)
     prompt_version = Column(String(50), default="v1.0", nullable=False)
     tokens_in = Column(Integer, default=0, nullable=False)

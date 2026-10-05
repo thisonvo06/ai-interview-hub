@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.core.security import verify_password, create_access_token, create_refresh_token
+from app.core.security import verify_password, create_access_token, create_refresh_token, decode_token
 from app.core.deps import require_auth, require_roles, log_operation
 from app.models.user import User, Role, UserRole
 from app.models.company import Company, CompanyVerification
@@ -30,11 +30,11 @@ def admin_login(req: LoginRequest, db: Session = Depends(get_db)):
     if "PLATFORM_ADMIN" not in user_roles and "SUPER_ADMIN" not in user_roles:
         raise HTTPException(status_code=403, detail="该账号不是平台管理员，禁止登入后台")
 
-    access_token = create_access_token(
-        subject=user.id,
-        extra_claims={"account_type": "ADMIN", "role_codes": user_roles}
-    )
-    refresh_token = create_refresh_token(subject=user.id)
+    from app.api.v1.auth import issue_token_with_session
+    if user.status != "ACTIVE":
+        raise HTTPException(403, "管理员账号已被停用")
+    access_token = issue_token_with_session(db, user, user_roles)
+    refresh_token = create_refresh_token(subject=user.id, extra_claims={"jti": decode_token(access_token)["jti"]})
 
     log_operation(db, user.id, "管理员", "ADMIN", "ADMIN_LOGIN", "ADMIN", user.id, "管理员成功登入管理后台")
 
@@ -250,6 +250,7 @@ def list_jobs_for_review(
             "city": j.city,
             "salary": f"{j.salary_min}-{j.salary_max}K",
             "skills_required": j.skills_required,
+            "official_apply_url": j.official_apply_url,
             "status": j.status,
             "created_at": j.created_at.strftime("%Y-%m-%d %H:%M")
         })
@@ -265,6 +266,13 @@ def approve_job(
     if not job:
         raise HTTPException(status_code=404, detail="岗位不存在")
 
+    from app.services.official_apply import validate_official_url
+    try:
+        official_url = validate_official_url(job.official_apply_url)
+    except ValueError:
+        official_url = None
+    if not official_url:
+        raise HTTPException(409, "发布岗位前须补充有效的官网招聘链接")
     job.status = "PUBLISHED"
     db.commit()
     log_operation(db, admin.id, "管理员", "ADMIN", "APPROVE_JOB", "JOB", job.id, f"审核通过并公开发布岗位【{job.title}】")
@@ -372,7 +380,9 @@ def get_ai_providers(
     from app.services import ai_settings
     cfg = ai_settings.get_effective_config(db)
     # Mask API key per spec: "API Key 只显示掩码，不能在页面回显完整值"
-    masked_key = ai_settings.mask_key(cfg["api_key"]) or "sk-mock-••••••••••••"
+    masked_key = ai_settings.mask_key(cfg["api_key"])
+    from app.services.analytics import ai_metrics
+    metrics = ai_metrics(db, datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0))
 
     return ResponseModel(data={
         "provider": "Mock / OpenAI Compatible",
@@ -381,10 +391,9 @@ def get_ai_providers(
         "base_url": cfg["base_url"],
         "api_key_masked": masked_key,
         "configured": cfg["configured"],
-        "prompt_version": "v3.0",
-        "avg_latency_ms": 145,
-        "total_calls_today": 128,
-        "success_rate": 99.8
+        "prompt_version": "v4.0",
+        **metrics,
+        "total_calls_today": metrics["total_calls"]
     })
 
 @router.patch("/admin/ai/providers", response_model=ResponseModel[dict])
@@ -406,14 +415,13 @@ def update_ai_provider(
     })
 
 @router.get("/admin/ai/logs", response_model=ResponseModel[List[dict]])
-def get_ai_logs(admin: User = Depends(require_roles(["PLATFORM_ADMIN", "SUPER_ADMIN"]))):
-    # Spec: "AI 日志必须脱敏，不记录密码、Token 或不必要的隐私原文"
-    return ResponseModel(data=[
-        {"id": 1, "business_type": "RESUME_PARSE", "model": "mock-ai", "latency_ms": 120, "tokens": 420, "status": "SUCCESS", "time": "12:30:15"},
-        {"id": 2, "business_type": "QUESTION_GEN", "model": "mock-ai", "latency_ms": 95, "tokens": 180, "status": "SUCCESS", "time": "12:31:02"},
-        {"id": 3, "business_type": "EVALUATE_RUBRIC", "model": "mock-ai", "latency_ms": 150, "tokens": 580, "status": "SUCCESS", "time": "12:32:44"},
-        {"id": 4, "business_type": "REPORT_GEN", "model": "mock-ai", "latency_ms": 210, "tokens": 920, "status": "SUCCESS", "time": "12:35:10"}
-    ])
+def get_ai_logs(admin: User = Depends(require_roles(["PLATFORM_ADMIN", "SUPER_ADMIN"])), db: Session = Depends(get_db)):
+    rows = db.query(AICallLog).order_by(AICallLog.id.desc()).limit(100).all()
+    return ResponseModel(data=[{"id": l.id, "business_type": l.business_type, "business_id": l.business_id,
+        "user_id": l.user_id, "request_id": l.request_id, "model": l.model, "prompt_version": l.prompt_version,
+        "latency_ms": l.latency_ms, "tokens": l.tokens_in + l.tokens_out, "status": l.status,
+        "result_source": l.result_source, "error_code": l.error_code,
+        "time": l.created_at.isoformat()} for l in rows])
 
 @router.get("/admin/roles", response_model=ResponseModel[List[dict]])
 def list_roles(admin: User = Depends(require_roles(["PLATFORM_ADMIN", "SUPER_ADMIN"])), db: Session = Depends(get_db)):

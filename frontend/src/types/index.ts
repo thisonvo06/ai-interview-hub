@@ -14,6 +14,7 @@ export interface UserInfo {
 }
 
 export interface JobItem {
+  official_apply_url?: string | null
   id: number
   company_id: number
   company_name: string
@@ -73,7 +74,7 @@ export interface ApplicationItem {
   company_name: string
   resume_id: number
   status: string
-  match_score: number
+  match_score: number | null
   reject_reason?: string
   withdraw_reason?: string
   tags: string[]
@@ -214,6 +215,8 @@ export interface PaperPreview {
 }
 
 export interface InterviewReportData {
+  provenance?: { source?: string; answer_sources?: string[]; model?: string; fallback_reason?: string }
+  learning_state?: string
   id: number
   interview_id: number
   job_title?: string
@@ -229,6 +232,7 @@ export interface InterviewReportData {
   status: string
   created_at: string
   questions_analysis: {
+    provenance?: { source?: string; model?: string; fallback_reason?: string }
     seq: number
     question: string
     answer: string
@@ -244,6 +248,7 @@ export interface InterviewReportData {
     overtime?: boolean
     overtime_sec?: number
     is_empty?: boolean
+    is_skipped?: boolean
     evidence: string[]
     weaknesses: string[]
     missing_knowledge: string[]
@@ -269,4 +274,19 @@ export interface InterviewReportData {
     avg_usage_ratio: number
     overtime_skills: string[]
   } | null
+}
+
+export interface ExternalApplicationItem {
+  id: number
+  job_id: number
+  job_title: string
+  company_name: string
+  official_apply_url: string
+  channel: 'OFFICIAL_WEBSITE'
+  status_source: 'USER_REPORTED'
+  status: string
+  note?: string
+  created_at: string
+  updated_at: string
+  status_history: { to_status: string; note: string; created_at: string }[]
 }

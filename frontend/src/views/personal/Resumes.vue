@@ -116,9 +116,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { resumeApi } from '@/api'
+import { resumeApi, privateFileApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import StateContainer from '@/components/StateContainer.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -164,12 +164,13 @@ const beforeUpload = (file: File) => {
   return true
 }
 
-const openPreview = (resume: ResumeItem) => {
+const openPreview = async (resume: ResumeItem) => {
   if (!resume.file_url) {
     ElMessage.warning('该简历暂无上传文档')
     return
   }
-  previewUrl.value = resume.file_url
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  previewUrl.value = await privateFileApi.preview(resume.file_url)
   previewTitle.value = resume.file_name || resume.name
   previewVisible.value = true
 }
@@ -217,11 +218,12 @@ const handleUploadSuccess = async (response: any) => {
       // 解析失败不阻断上传，用户可稍后手动重试
     }
 
-    ElMessage.success('简历上传成功，已生成在线文档预览并完成 AI 结构化解析')
+    ElMessage.success('简历文件已保存；可在简历中心查看或完善内容')
     await loadResumes()
 
     // 上传后直接展示可打开的文档预览
-    previewUrl.value = fileUrl
+    if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+    previewUrl.value = await privateFileApi.preview(fileUrl)
     previewTitle.value = fileName
     previewVisible.value = true
   } catch (e) {
@@ -299,6 +301,10 @@ const handleMenu = async (cmd: string, resume: ResumeItem) => {
 onMounted(() => {
   loadResumes()
 })
+watch(previewVisible, (visible) => {
+  if (!visible && previewUrl.value) { URL.revokeObjectURL(previewUrl.value); previewUrl.value = '' }
+})
+onUnmounted(() => { if (previewUrl.value) URL.revokeObjectURL(previewUrl.value) })
 </script>
 
 <style scoped>

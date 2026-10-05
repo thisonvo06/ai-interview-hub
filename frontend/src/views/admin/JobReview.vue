@@ -14,7 +14,7 @@
           <el-table-column prop="title" label="职位名称" min-width="180">
             <template #default="{ row }">
               <div style="font-weight: 600; color: #1E293B;">{{ row.title }}</div>
-              <div style="font-size: 12px; color: #64748B;">{{ row.department_name || '技术部' }}</div>
+              <div style="font-size: 12px; color: #64748B;">{{ row.department_name || '' }}</div>
             </template>
           </el-table-column>
 
@@ -23,7 +23,14 @@
 
           <el-table-column prop="salary" label="薪资范围" width="130">
             <template #default="{ row }">
-              <span style="font-weight: 600; color: #D97706;">{{ row.salary_min }}-{{ row.salary_max }}K</span>
+              <span style="font-weight: 600; color: #D97706;">{{ row.salary }}</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="官网招聘入口" min-width="200">
+            <template #default="{ row }">
+              <a v-if="row.official_apply_url" :href="row.official_apply_url" target="_blank" rel="noopener noreferrer">{{ row.official_apply_url }}</a>
+              <span v-else>尚未配置</span>
             </template>
           </el-table-column>
 

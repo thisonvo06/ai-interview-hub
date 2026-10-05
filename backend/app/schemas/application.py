@@ -37,7 +37,7 @@ class ApplicationOut(BaseModel):
     company_logo: Optional[str] = None
     resume_id: int
     status: str
-    match_score: int
+    match_score: Optional[int] = None
     reject_reason: Optional[str] = None
     withdraw_reason: Optional[str] = None
     assigned_recruiter_id: Optional[int] = None

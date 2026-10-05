@@ -3,6 +3,7 @@ import json
 import logging
 from typing import Dict, Set
 from fastapi import WebSocket, WebSocketDisconnect
+from app.api.v1.realtime import authenticate_websocket, websocket_session_active
 
 logger = logging.getLogger("notification_ws")
 
@@ -30,6 +31,10 @@ class ConnectionManager:
     async def _send(self, user_id: int, payload: dict):
         for ws in list(self.active.get(user_id, set())):
             try:
+                if not websocket_session_active(ws):
+                    await ws.close(code=1008)
+                    self.disconnect(user_id, ws)
+                    continue
                 await ws.send_text(json.dumps(payload, ensure_ascii=False))
             except Exception:
                 self.disconnect(user_id, ws)
@@ -48,14 +53,24 @@ manager = ConnectionManager()
 
 
 async def handle_notification_websocket(websocket: WebSocket, user_id: int):
+    if await authenticate_websocket(websocket, "notifications", user_id) is None:
+        return
     await manager.connect(user_id, websocket)
     try:
         # 连接建立后回推一次，让前端同步最新未读状态
         await websocket.send_text(json.dumps({"type": "connected"}, ensure_ascii=False))
         while True:
-            await websocket.receive_text()
+            if not websocket_session_active(websocket):
+                await websocket.close(code=1008)
+                break
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=30)
+            except asyncio.TimeoutError:
+                continue
     except WebSocketDisconnect:
         manager.disconnect(user_id, websocket)
     except Exception as e:  # pragma: no cover
         logger.error(f"通知 WebSocket 异常: {e}")
+        manager.disconnect(user_id, websocket)
+    finally:
         manager.disconnect(user_id, websocket)

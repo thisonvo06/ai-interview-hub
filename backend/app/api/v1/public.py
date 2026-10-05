@@ -2,7 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_roles
 from app.models.company import Company
 from app.models.job import Job, JobSkill
 from app.models.user import User
@@ -15,14 +15,14 @@ router = APIRouter(tags=["公共端"])
 
 
 @router.get("/public/ai-settings", response_model=ResponseModel[dict])
-def get_ai_settings(db: Session = Depends(get_db)):
+def get_ai_settings(db: Session = Depends(get_db), user: Optional[User] = Depends(get_current_user)):
     """读取当前生效的 AI 服务配置（Key 仅返回掩码，登录前可访问）。"""
     cfg = ai_settings.get_effective_config(db)
     return ResponseModel(data={
         "mode": cfg["mode"].upper(),
         "model": cfg["model"],
-        "base_url": cfg["base_url"],
-        "api_key_masked": ai_settings.mask_key(cfg["api_key"]),
+        "base_url": cfg["base_url"] if user and any(r.role_code in ("PLATFORM_ADMIN", "SUPER_ADMIN") for r in user.roles) else "",
+        "api_key_masked": ai_settings.mask_key(cfg["api_key"]) if user and any(r.role_code in ("PLATFORM_ADMIN", "SUPER_ADMIN") for r in user.roles) else "",
         "configured": cfg["configured"],
     })
 
@@ -32,15 +32,9 @@ def update_ai_settings(
     request: Request,
     data: dict,
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(require_roles(["PLATFORM_ADMIN", "SUPER_ADMIN"])),
 ):
     """保存 AI 服务配置。需登录后方可修改，保存后即时生效无需重启。"""
-    cfg = ai_settings.get_effective_config(db)
-    if cfg["configured"]:
-        # 已配置后仍需登录验证（防止未授权篡改），不再限制为仅管理员
-        if not current_user:
-            raise HTTPException(status_code=401, detail="请先登录后再修改 AI 服务配置")
-
     base_url = str(data.get("base_url", "")).strip()
     if base_url:
         err = ai_settings.validate_base_url(base_url)
@@ -62,19 +56,21 @@ def update_ai_settings(
 async def test_ai_settings(
     data: dict,
     db: Session = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User = Depends(require_roles(["PLATFORM_ADMIN", "SUPER_ADMIN"])),
 ):
     """测试 AI 服务连接。若 api_key 留空则使用已保存的 Key 进行验证。"""
     cfg = ai_settings.get_effective_config(db)
     base_url = str(data.get("base_url", "")).strip().rstrip("/") or cfg["base_url"]
     api_key = str(data.get("api_key", "")).strip() or cfg["api_key"]
+    if not data.get("api_key") and base_url != cfg["base_url"].rstrip("/"):
+        raise HTTPException(400, "测试新服务地址时请显式填写该服务的 API Key，已保存的密钥仅用于原服务地址")
     model = str(data.get("model", "")).strip() or cfg["model"]
     result = await ai_settings.test_connection(base_url, api_key, model)
     return ResponseModel(data=result)
 
 
 @router.get("/public/ai-stats", response_model=ResponseModel[dict])
-def get_ai_stats(db: Session = Depends(get_db)):
+def get_ai_stats(db: Session = Depends(get_db), admin: User = Depends(require_roles(["PLATFORM_ADMIN", "SUPER_ADMIN"]))):
     """返回 AI 服务用量统计：总调用次数 / Token 消耗 / 成功率 + 近 20 条调用记录。"""
     from app.models.system import AICallLog
     from sqlalchemy import func
@@ -89,6 +85,8 @@ def get_ai_stats(db: Session = Depends(get_db)):
         logs.order_by(AICallLog.created_at.desc()).limit(20).all()
     )
 
+    from app.services.analytics import ai_metrics
+    metrics = ai_metrics(db)
     cfg = ai_settings.get_effective_config(db)
     return ResponseModel(data={
         "total_calls": total,
@@ -102,6 +100,7 @@ def get_ai_stats(db: Session = Depends(get_db)):
         "current_base_url": cfg["base_url"],
         "api_key_masked": ai_settings.mask_key(cfg["api_key"]),
         "configured": cfg["configured"],
+        **metrics,
         "recent_logs": [
             {
                 "id": l.id,
@@ -146,10 +145,10 @@ def get_public_home(db: Session = Depends(get_db)):
 
     return ResponseModel(data={
         "stats": {
-            "verified_companies": max(5, companies_count),
-            "published_jobs": max(15, jobs_count),
-            "active_talents": max(10, users_count),
-            "simulated_interviews": max(10, interviews_count)
+            "verified_companies": companies_count,
+            "published_jobs": jobs_count,
+            "active_talents": users_count,
+            "simulated_interviews": interviews_count
         },
         "features": [
             {

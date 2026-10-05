@@ -2,79 +2,80 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 // Layouts
-import PublicLayout from '@/layouts/PublicLayout.vue'
-import PersonalLayout from '@/layouts/PersonalLayout.vue'
-import EnterpriseLayout from '@/layouts/EnterpriseLayout.vue'
-import AdminLayout from '@/layouts/AdminLayout.vue'
+const PublicLayout = () => import('@/layouts/PublicLayout.vue')
+const PersonalLayout = () => import('@/layouts/PersonalLayout.vue')
+const EnterpriseLayout = () => import('@/layouts/EnterpriseLayout.vue')
+const AdminLayout = () => import('@/layouts/AdminLayout.vue')
 
 // Error views
-import NotFound from '@/views/error/NotFound.vue'
-import Forbidden from '@/views/error/Forbidden.vue'
+const NotFound = () => import('@/views/error/NotFound.vue')
+const Forbidden = () => import('@/views/error/Forbidden.vue')
 
 // Auth views
-import Login from '@/views/auth/Login.vue'
-import RegisterSelect from '@/views/auth/RegisterSelect.vue'
-import RegisterPersonal from '@/views/auth/RegisterPersonal.vue'
-import RegisterEnterprise from '@/views/auth/RegisterEnterprise.vue'
-import Onboarding from '@/views/auth/Onboarding.vue'
-import ForgotPassword from '@/views/auth/ForgotPassword.vue'
-import AdminLogin from '@/views/auth/AdminLogin.vue'
-import AISetup from '@/views/auth/AISetup.vue'
+const Login = () => import('@/views/auth/Login.vue')
+const RegisterSelect = () => import('@/views/auth/RegisterSelect.vue')
+const RegisterPersonal = () => import('@/views/auth/RegisterPersonal.vue')
+const RegisterEnterprise = () => import('@/views/auth/RegisterEnterprise.vue')
+const Onboarding = () => import('@/views/auth/Onboarding.vue')
+const ForgotPassword = () => import('@/views/auth/ForgotPassword.vue')
+const AdminLogin = () => import('@/views/auth/AdminLogin.vue')
+const AISetup = () => import('@/views/auth/AISetup.vue')
 
 // Public views
-import Home from '@/views/public/Home.vue'
-import JobSquare from '@/views/public/JobSquare.vue'
-import JobDetail from '@/views/public/JobDetail.vue'
-import CompanyPublic from '@/views/public/CompanyPublic.vue'
-import Features from '@/views/public/Features.vue'
-import About from '@/views/public/About.vue'
-import Help from '@/views/public/Help.vue'
+const Home = () => import('@/views/public/Home.vue')
+const JobSquare = () => import('@/views/public/JobSquare.vue')
+const JobDetail = () => import('@/views/public/JobDetail.vue')
+const CompanyPublic = () => import('@/views/public/CompanyPublic.vue')
+const Features = () => import('@/views/public/Features.vue')
+const About = () => import('@/views/public/About.vue')
+const Help = () => import('@/views/public/Help.vue')
 
 // Personal views
-import PersonalDashboard from '@/views/personal/Dashboard.vue'
-import JobExplore from '@/views/personal/JobExplore.vue'
-import Applications from '@/views/personal/Applications.vue'
-import Resumes from '@/views/personal/Resumes.vue'
-import ResumeEdit from '@/views/personal/ResumeEdit.vue'
-import ResumeAnalysis from '@/views/personal/ResumeAnalysis.vue'
-import Assessment from '@/views/personal/Assessment.vue'
-import InterviewCreate from '@/views/personal/InterviewCreate.vue'
-import InterviewSession from '@/views/personal/InterviewSession.vue'
-import InterviewsList from '@/views/personal/InterviewsList.vue'
-import InterviewReportView from '@/views/personal/InterviewReportView.vue'
-import GrowthCenter from '@/views/personal/GrowthCenter.vue'
-import LearningRoadmap from '@/views/personal/LearningRoadmap.vue'
-import Notifications from '@/views/personal/Notifications.vue'
-import Profile from '@/views/personal/Profile.vue'
-import Settings from '@/views/personal/Settings.vue'
-import BookmarkedQuestions from '@/views/personal/BookmarkedQuestions.vue'
+const PersonalDashboard = () => import('@/views/personal/Dashboard.vue')
+const JobExplore = () => import('@/views/personal/JobExplore.vue')
+const JobSearchWorkspace = () => import('@/views/personal/JobSearchWorkspace.vue')
+const Applications = () => import('@/views/personal/Applications.vue')
+const Resumes = () => import('@/views/personal/Resumes.vue')
+const ResumeEdit = () => import('@/views/personal/ResumeEdit.vue')
+const ResumeAnalysis = () => import('@/views/personal/ResumeAnalysis.vue')
+const Assessment = () => import('@/views/personal/Assessment.vue')
+const InterviewCreate = () => import('@/views/personal/InterviewCreate.vue')
+const InterviewSession = () => import('@/views/personal/InterviewSession.vue')
+const InterviewsList = () => import('@/views/personal/InterviewsList.vue')
+const InterviewReportView = () => import('@/views/personal/InterviewReportView.vue')
+const GrowthCenter = () => import('@/views/personal/GrowthCenter.vue')
+const LearningRoadmap = () => import('@/views/personal/LearningRoadmap.vue')
+const Notifications = () => import('@/views/personal/Notifications.vue')
+const Profile = () => import('@/views/personal/Profile.vue')
+const Settings = () => import('@/views/personal/Settings.vue')
+const BookmarkedQuestions = () => import('@/views/personal/BookmarkedQuestions.vue')
 
 // Enterprise views
-import EnterpriseDashboard from '@/views/enterprise/Dashboard.vue'
-import EnterpriseJobs from '@/views/enterprise/Jobs.vue'
-import JobCreate from '@/views/enterprise/JobCreate.vue'
-import JobEdit from '@/views/enterprise/JobEdit.vue'
-import Candidates from '@/views/enterprise/Candidates.vue'
-import CandidateDetail from '@/views/enterprise/CandidateDetail.vue'
-import PipelineKanban from '@/views/enterprise/PipelineKanban.vue'
-import EnterpriseInterviews from '@/views/enterprise/Interviews.vue'
-import Evaluation from '@/views/enterprise/Evaluation.vue'
-import TalentPool from '@/views/enterprise/TalentPool.vue'
-import Analytics from '@/views/enterprise/Analytics.vue'
-import Members from '@/views/enterprise/Members.vue'
-import EnterpriseSettings from '@/views/enterprise/Settings.vue'
+const EnterpriseDashboard = () => import('@/views/enterprise/Dashboard.vue')
+const EnterpriseJobs = () => import('@/views/enterprise/Jobs.vue')
+const JobCreate = () => import('@/views/enterprise/JobCreate.vue')
+const JobEdit = () => import('@/views/enterprise/JobEdit.vue')
+const Candidates = () => import('@/views/enterprise/Candidates.vue')
+const CandidateDetail = () => import('@/views/enterprise/CandidateDetail.vue')
+const PipelineKanban = () => import('@/views/enterprise/PipelineKanban.vue')
+const EnterpriseInterviews = () => import('@/views/enterprise/Interviews.vue')
+const Evaluation = () => import('@/views/enterprise/Evaluation.vue')
+const TalentPool = () => import('@/views/enterprise/TalentPool.vue')
+const Analytics = () => import('@/views/enterprise/Analytics.vue')
+const Members = () => import('@/views/enterprise/Members.vue')
+const EnterpriseSettings = () => import('@/views/enterprise/Settings.vue')
 
 // Admin views
-import AdminDashboard from '@/views/admin/Dashboard.vue'
-import AdminUsers from '@/views/admin/Users.vue'
-import AdminCompanies from '@/views/admin/Companies.vue'
-import AdminVerifications from '@/views/admin/Verifications.vue'
-import AdminJobReview from '@/views/admin/JobReview.vue'
-import AdminComplaints from '@/views/admin/Complaints.vue'
-import AdminContent from '@/views/admin/Content.vue'
-import AdminQuestionBank from '@/views/admin/QuestionBank.vue'
-import AdminAIService from '@/views/admin/AIService.vue'
-import AdminSecurityAudit from '@/views/admin/SecurityAudit.vue'
+const AdminDashboard = () => import('@/views/admin/Dashboard.vue')
+const AdminUsers = () => import('@/views/admin/Users.vue')
+const AdminCompanies = () => import('@/views/admin/Companies.vue')
+const AdminVerifications = () => import('@/views/admin/Verifications.vue')
+const AdminJobReview = () => import('@/views/admin/JobReview.vue')
+const AdminComplaints = () => import('@/views/admin/Complaints.vue')
+const AdminContent = () => import('@/views/admin/Content.vue')
+const AdminQuestionBank = () => import('@/views/admin/QuestionBank.vue')
+const AdminAIService = () => import('@/views/admin/AIService.vue')
+const AdminSecurityAudit = () => import('@/views/admin/SecurityAudit.vue')
 
 const routes: RouteRecordRaw[] = [
   // 公共门户
@@ -125,6 +126,7 @@ const routes: RouteRecordRaw[] = [
       { path: '', redirect: '/personal/dashboard' },
       { path: 'dashboard', name: 'PersonalDashboard', component: PersonalDashboard, meta: { title: '求职者工作台' } },
       { path: 'jobs', name: 'PersonalJobExplore', component: JobExplore, meta: { title: '智能岗位探索' } },
+      { path: 'job-search', name: 'PersonalJobSearch', component: JobSearchWorkspace, meta: { title: '求职计划' } },
       { path: 'applications', name: 'PersonalApplications', component: Applications, meta: { title: '我的应聘申请' } },
       { path: 'resumes', name: 'PersonalResumes', component: Resumes, meta: { title: '我的简历中心' } },
       { path: 'resumes/create', name: 'PersonalResumeCreate', component: ResumeEdit, meta: { title: '创建在线简历' } },

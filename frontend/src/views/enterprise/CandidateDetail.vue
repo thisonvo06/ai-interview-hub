@@ -6,37 +6,33 @@
         <div class="header-card">
           <div class="cand-main-info">
             <div class="cand-avatar">
-              {{ cand.user?.profile?.name ? cand.user.profile.name.charAt(0) : '候' }}
+              {{ snapshot.candidate_name?.charAt(0) || '候' }}
             </div>
             <div>
               <div class="cand-name-row">
-                <span class="cand-name">{{ cand.user?.profile?.name || cand.user?.name }}</span>
+                <span class="cand-name">{{ snapshot.candidate_name || '姓名未记录' }}</span>
                 <el-tag :type="getStatusTag(cand.status)" size="small">
                   {{ getStatusLabel(cand.status) }}
                 </el-tag>
-                <span class="job-tag">应聘: {{ cand.job?.title }}</span>
+                <span class="job-tag">应聘: {{ cand.job_title }}</span>
               </div>
               <div class="cand-sub-meta">
-                <span>{{ cand.user?.profile?.education || '统招本科' }}</span>
-                <span class="dot">•</span>
-                <span>{{ cand.user?.profile?.major || '软件工程' }}</span>
-                <span class="dot">•</span>
-                <span>{{ cand.user?.profile?.phone || '138****0000' }}</span>
-                <span class="dot">•</span>
-                <span>{{ cand.user?.email }}</span>
+                <span>{{ snapshot.school || '学校未记录' }}</span><span class="dot">•</span>
+                <span>{{ snapshot.education || '学历未记录' }}</span><span class="dot">•</span>
+                <span>{{ snapshot.major || '专业未记录' }}</span>
               </div>
             </div>
           </div>
 
           <div class="cand-match-box">
             <div class="match-score-num" :style="{ color: getScoreColor(cand.match_score || 0) }">
-              {{ cand.match_score !== null ? cand.match_score : '--' }}
+              {{ cand.match_score ?? '—' }}
             </div>
-            <div class="match-score-label">AI 岗位胜任匹配度</div>
+            <div class="match-score-label">简历技能覆盖率</div>
           </div>
 
           <div class="header-actions">
-            <el-button type="primary" @click="openAdvanceDialog">
+            <el-button type="primary" :disabled="!nextStatuses.length" @click="openAdvanceDialog">
               <el-icon style="margin-right: 4px;"><Promotion /></el-icon> 推进阶段
             </el-button>
             <el-button type="success" plain @click="openInviteDialog">
@@ -65,121 +61,42 @@
 
         <!-- 详细内容选项卡 -->
         <el-tabs v-model="activeTab" class="detail-tabs">
-          <!-- 简历档案快照 -->
-          <el-tab-pane label="简历详情快照" name="resume">
-            <div class="tab-content-card">
-              <h4 class="section-title">教育经历</h4>
-              <div class="exp-item">
-                <div class="exp-header">
-                  <span class="exp-title">{{ cand.user?.profile?.school || '电子科技大学' }}</span>
-                  <span class="exp-time">{{ cand.user?.profile?.grad_year ? `${cand.user.profile.grad_year}年毕业` : '2024届' }}</span>
-                </div>
-                <div class="exp-sub">{{ cand.user?.profile?.education || '本科' }} · {{ cand.user?.profile?.major || '计算机科学与技术' }}</div>
+          <el-tab-pane label="投递时的简历快照" name="resume">
+            <p class="exp-desc">此页仅展示历史平台申请时保存的内容。官网渠道笔记不会进入企业候选人库。</p>
+            <div v-for="(items, section) in snapshotSections" :key="section" class="tab-content-card">
+              <h4 class="section-title">{{ section }}</h4>
+              <div v-for="(item, idx) in items" :key="idx" class="exp-item" style="margin-bottom:12px">
+                <div class="exp-title">{{ item.school || item.name || item.company }}</div>
+                <div class="exp-sub">{{ [item.degree, item.major, item.role, item.title, item.start_date, item.end_date].filter(Boolean).join(' · ') }}</div>
+                <p class="exp-desc">{{ item.description || item.technologies || '' }}</p>
               </div>
-
-              <el-divider />
-
-              <h4 class="section-title">求职意向与掌握技能</h4>
-              <div style="margin-bottom: 16px;">
-                <el-tag
-                  v-for="(s, idx) in (cand.resume?.skills || ['Python', 'FastAPI', 'MySQL', 'Redis', 'Docker', '微服务架构'])"
-                  :key="idx"
-                  style="margin-right: 8px; margin-bottom: 8px;"
-                >
-                  {{ s.skill_name || s }}
-                </el-tag>
-              </div>
-
-              <el-divider />
-
-              <h4 class="section-title">项目经历与实战产出</h4>
-              <div class="exp-item">
-                <div class="exp-header">
-                  <span class="exp-title">高并发分布式系统与 AI 面试微服务研发</span>
-                  <span class="exp-time">核心研发工程师</span>
-                </div>
-                <p class="exp-desc">
-                  负责核心业务服务的高性能解耦，通过 WebSocket 实现低延迟流式语音/文本对话；集成大型语言模型针对结构化问答进行实时评分与胜任力雷达图计算。
-                </p>
-              </div>
-
-              <div class="exp-item" style="margin-top: 16px;">
-                <div class="exp-header">
-                  <span class="exp-title">企业级多租户后台治理平台</span>
-                  <span class="exp-time">全栈架构负责人</span>
-                </div>
-                <p class="exp-desc">
-                  基于 RBAC 构建多角色细粒度权限控制体系，支持千万级操作日志审计与安全追溯。
-                </p>
-              </div>
+              <el-empty v-if="!items.length" description="该快照未保存此项" :image-size="50" />
             </div>
+            <h4 class="section-title">已记录技能</h4>
+            <el-tag v-for="(skill, idx) in snapshot.skills || []" :key="idx" style="margin:0 8px 8px 0">{{ skill.skill_name || skill.name || skill }}</el-tag>
+            <el-empty v-if="!snapshot.skills?.length" description="该快照未保存技能" :image-size="50" />
           </el-tab-pane>
-
-          <!-- AI 初筛与胜任力评估 -->
-          <el-tab-pane label="AI 初筛与胜任力评估" name="ai_eval">
+          <el-tab-pane label="匹配与团队评估" name="ai_eval">
             <div class="tab-content-card">
               <div class="eval-banner">
-                <div class="eval-score-box">
-                  <div class="eval-num">{{ cand.match_score || 85 }}</div>
-                  <div class="eval-txt">人岗匹配指数</div>
-                </div>
-                <div class="eval-summary">
-                  <div class="summary-title">AI 初筛决策建议: <span style="color: #10B981;">优先推荐面试</span></div>
-                  <div class="summary-p">
-                    {{ cand.match_explanation?.highlights || '候选人在后端开发及分布式微服务架构方面拥有扎实的实战落地经验，核心技术栈与本岗位要求高度重合。学习能力及逻辑分析展现优秀潜力。' }}
-                  </div>
-                </div>
+                <div class="eval-score-box"><div class="eval-num">{{ cand.match_score ?? '—' }}</div><div class="eval-txt">简历技能覆盖率</div></div>
+                <div class="summary-p">按投递快照中的技能与岗位要求计算覆盖率，供人工评估参考。缺少技能记录时不生成分数。</div>
               </div>
-
-              <h4 class="section-title" style="margin-top: 24px;">核心优势亮点</h4>
-              <div class="highlights-box">
-                <div class="hl-item">
-                  <el-icon class="text-emerald" style="margin-right: 8px;"><Check /></el-icon>
-                  <span>专业技术栈（Python/FastAPI/分布式缓存）高度贴合团队当前业务体系。</span>
-                </div>
-                <div class="hl-item">
-                  <el-icon class="text-emerald" style="margin-right: 8px;"><Check /></el-icon>
-                  <span>具备高并发微服务工程实践经历，架构设计逻辑清晰。</span>
-                </div>
-              </div>
-
-              <h4 class="section-title" style="margin-top: 24px;">建议重点考察问题</h4>
-              <div class="questions-box">
-                <div class="q-item">1. 请结合真实业务场景，深入询问其在缓存一致性及分布式事务中的高可用容灾保障方案。</div>
-                <div class="q-item">2. 针对系统吞吐量瓶颈，考察其在性能压测调优方面的具体方法论与度量指标。</div>
-              </div>
+              <h4 class="section-title" style="margin-top:24px">团队评价</h4>
+              <p v-if="cand.recruiter_evaluation" class="exp-desc">{{ cand.recruiter_evaluation.summary }}</p>
+              <el-empty v-else description="暂无团队评价" :image-size="60" />
             </div>
           </el-tab-pane>
 
           <!-- 面试记录与评估 -->
           <el-tab-pane label="面试记录与团队评分" name="interviews">
             <div class="tab-content-card">
-              <div v-if="cand.interviews && cand.interviews.length > 0">
-                <div v-for="iv in cand.interviews" :key="iv.id" class="interview-record-item">
-                  <div class="iv-header">
-                    <div>
-                      <span class="iv-type">{{ iv.session_type === 'AI_MOCK' ? 'AI 模拟初筛' : '企业结构化面试' }}</span>
-                      <span class="iv-time">{{ formatDate(iv.created_at) }}</span>
-                    </div>
-                    <el-tag :type="iv.status === 'COMPLETED' ? 'success' : 'info'">
-                      {{ iv.status === 'COMPLETED' ? '已完成' : '进行中' }}
-                    </el-tag>
-                  </div>
-                  <div v-if="iv.report" class="iv-report-summary">
-                    <div style="font-weight: 600; margin-bottom: 6px;">面试综合评分: {{ iv.report.total_score }} 分</div>
-                    <div style="font-size: 13px; color: #475569;">{{ iv.report.overall_summary }}</div>
-                  </div>
-                  <div class="iv-actions" style="margin-top: 12px;">
-                    <el-button type="primary" link size="small" @click="$router.push(`/interviews/${iv.id}/report`)">
-                      查看完整答题诊断报告
-                    </el-button>
-                    <el-button type="default" size="small" @click="$router.push(`/enterprise/evaluations?interview_id=${iv.id}`)">
-                      填写/修改面试官打分
-                    </el-button>
-                  </div>
-                </div>
+              <div v-if="cand.interview_report" class="interview-record-item">
+                <div class="exp-title">企业面试 · {{ cand.interview_report.score }} 分</div>
+                <p class="exp-desc">{{ cand.interview_report.summary }}</p>
+                <el-button type="primary" link @click="$router.push(`/personal/interviews/${cand.interview_report.interview_id}/report`)">查看授权报告</el-button>
               </div>
-              <el-empty v-else description="暂无面试记录，可点击上方“发起面试邀请”按钮安排面试" />
+              <el-empty v-else description="暂无已生成的授权面试报告" />
             </div>
           </el-tab-pane>
 
@@ -188,7 +105,7 @@
             <div class="tab-content-card">
               <el-timeline>
                 <el-timeline-item
-                  v-for="(rec, idx) in (cand.status_history || defaultTimeline)"
+                  v-for="(rec, idx) in (cand.timeline || [])"
                   :key="idx"
                   :timestamp="formatDate(rec.created_at)"
                   placement="top"
@@ -197,7 +114,7 @@
                     阶段流转: {{ getStatusLabel(rec.to_status || rec.status) }}
                   </div>
                   <div style="font-size: 13px; color: #64748B; margin-top: 4px;">
-                    操作人: {{ rec.operator_name || '系统 / HR' }} · {{ rec.comment || '正常推进' }}
+                    {{ rec.note || '未记录备注' }}
                   </div>
                 </el-timeline-item>
               </el-timeline>
@@ -211,16 +128,11 @@
     <el-dialog v-model="showAdvanceDialog" title="推进候选人阶段" width="500px">
       <el-form label-position="top">
         <el-form-item label="流转目标阶段">
-          <el-select v-model="advanceForm.target_status" style="width: 100%;">
-            <el-option label="AI 初筛 (AI_SCREENING)" value="AI_SCREENING" />
-            <el-option label="发起 AI 模拟面试 (AI_INTERVIEW_PENDING)" value="AI_INTERVIEW_PENDING" />
-            <el-option label="安排企业面试 (ENTERPRISE_INTERVIEW)" value="ENTERPRISE_INTERVIEW" />
-            <el-option label="发放 Offer (OFFER)" value="OFFER" />
-            <el-option label="确认入职 (HIRED)" value="HIRED" />
-            <el-option label="淘汰/不合适 (REJECTED)" value="REJECTED" />
+          <el-select v-model="advanceForm.to_status" style="width: 100%;">
+            <el-option v-for="status in nextStatuses" :key="status" :label="getStatusLabel(status)" :value="status" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="advanceForm.target_status === 'REJECTED'" label="淘汰原因说明">
+        <el-form-item v-if="advanceForm.to_status === 'REJECTED'" label="淘汰原因说明">
           <el-select v-model="advanceForm.reject_reason" placeholder="选择未通过原因" style="width: 100%;">
             <el-option label="专业技术与岗位要求差距较大" value="专业技术不符" />
             <el-option label="项目实战与独立解决问题经验不足" value="经验不符" />
@@ -229,7 +141,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="流转备注 / 评语">
-          <el-input v-model="advanceForm.comment" type="textarea" :rows="3" placeholder="填写阶段推进评语..." />
+          <el-input v-model="advanceForm.note" type="textarea" :rows="3" placeholder="填写阶段推进评语..." />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -284,9 +196,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { Promotion, Calendar, CollectionTag, Check } from '@element-plus/icons-vue'
+import { Promotion, Calendar, CollectionTag } from '@element-plus/icons-vue'
 import StateContainer from '@/components/StateContainer.vue'
 import { enterpriseApi } from '@/api'
 import { ElMessage } from 'element-plus'
@@ -297,10 +209,12 @@ const error = ref('')
 const cand = ref<any>(null)
 const activeTab = ref('resume')
 
-const defaultTimeline = [
-  { status: 'SUBMITTED', operator_name: '候选人本人', comment: '投递简历', created_at: new Date().toISOString() },
-  { status: 'AI_SCREENING', operator_name: '系统 AI 引擎', comment: '完成人岗匹配度初筛分析', created_at: new Date().toISOString() }
-]
+const snapshot = computed(() => cand.value?.resume_snapshot || {})
+const snapshotSections = computed(() => ({
+  '教育经历': snapshot.value.educations || snapshot.value.education_experiences || [],
+  '项目经历': snapshot.value.projects || [],
+  '工作经历': snapshot.value.work_experiences || []
+}))
 
 const fetchDetail = async () => {
   loading.value = true
@@ -315,19 +229,25 @@ const fetchDetail = async () => {
   }
 }
 
+const nextStatuses = computed(() => ({
+  SUBMITTED: ['VIEWED', 'AI_SCREENING', 'REJECTED'], VIEWED: ['AI_SCREENING', 'REJECTED'],
+  AI_SCREENING: ['AI_INTERVIEW_PENDING', 'REJECTED'], AI_INTERVIEW_PENDING: ['AI_INTERVIEW_DONE', 'ENTERPRISE_INTERVIEW', 'REJECTED'],
+  AI_INTERVIEW_DONE: ['ENTERPRISE_INTERVIEW', 'OFFER', 'REJECTED'], ENTERPRISE_INTERVIEW: ['OFFER', 'REJECTED'], OFFER: ['HIRED', 'REJECTED']
+} as Record<string, string[]>)[cand.value?.status] || [])
+
 // 推进阶段
 const showAdvanceDialog = ref(false)
 const advancing = ref(false)
 const advanceForm = reactive({
-  target_status: 'ENTERPRISE_INTERVIEW',
+  to_status: 'ENTERPRISE_INTERVIEW',
   reject_reason: '',
-  comment: ''
+  note: ''
 })
 
 const openAdvanceDialog = () => {
-  advanceForm.target_status = 'ENTERPRISE_INTERVIEW'
+  advanceForm.to_status = nextStatuses.value[0] || ''
   advanceForm.reject_reason = ''
-  advanceForm.comment = ''
+  advanceForm.note = ''
   showAdvanceDialog.value = true
 }
 
@@ -335,9 +255,9 @@ const handleConfirmAdvance = async () => {
   advancing.value = true
   try {
     await enterpriseApi.advanceCandidate(cand.value.id, {
-      target_status: advanceForm.target_status,
-      reject_reason: advanceForm.target_status === 'REJECTED' ? advanceForm.reject_reason : undefined,
-      comment: advanceForm.comment
+      to_status: advanceForm.to_status,
+      reject_reason: advanceForm.to_status === 'REJECTED' ? advanceForm.reject_reason : undefined,
+      note: advanceForm.note
     })
     ElMessage.success('流转成功')
     showAdvanceDialog.value = false

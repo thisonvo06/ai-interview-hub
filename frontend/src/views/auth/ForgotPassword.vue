@@ -2,7 +2,7 @@
   <div class="auth-page">
     <div class="card">
       <h2>找回密码</h2>
-      <p class="desc">输入注册邮箱获取重置令牌，然后设置新密码</p>
+      <p class="desc">输入注册邮箱发送重置邮件，然后设置新密码</p>
 
       <el-form label-position="top">
         <!-- 第一步：发送重置令牌 -->
@@ -10,14 +10,14 @@
           <div class="email-row">
             <el-input v-model="email" placeholder="请输入注册邮箱" size="large" />
             <el-button type="primary" size="large" :loading="sending" @click="handleSend">
-              获取重置令牌
+              发送重置邮件
             </el-button>
           </div>
         </el-form-item>
 
         <!-- 第二步：重置密码 -->
         <el-form-item label="重置令牌">
-          <el-input v-model="resetToken" placeholder="邮件中的令牌（演示环境自动填入）" size="large" />
+          <el-input v-model="resetToken" placeholder="邮件链接中的重置令牌" size="large" />
         </el-form-item>
         <el-form-item label="新密码">
           <el-input v-model="newPassword" type="password" show-password placeholder="请输入新密码（至少6位）" size="large" />
@@ -70,13 +70,7 @@ const handleSend = async () => {
   sending.value = true
   try {
     const res: any = await authApi.forgotPassword(email.value.trim())
-    const token = res?.dev_reset_token
-    if (token) {
-      resetToken.value = token
-      ElMessage.success('开发模式：重置令牌已生成并自动填入，请直接设置新密码')
-    } else {
-      ElMessage.success('重置令牌已发送至您的邮箱，请查收')
-    }
+    ElMessage.info(res?.message || '请查收重置邮件，未收到时请联系管理员')
   } catch (err: any) {
     ElMessage.error(err.response?.data?.message || '发送失败，请稍后重试')
   } finally {
@@ -86,7 +80,7 @@ const handleSend = async () => {
 
 const handleReset = async () => {
   if (!resetToken.value.trim()) {
-    ElMessage.warning('请先获取重置令牌')
+    ElMessage.warning('请先发送重置邮件')
     return
   }
   if (!newPassword.value || newPassword.value.length < 6) {

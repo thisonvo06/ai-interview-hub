@@ -89,6 +89,10 @@
               </el-col>
             </el-row>
 
+            <el-form-item label="企业官网招聘链接" prop="official_apply_url">
+              <el-input v-model="form.official_apply_url" placeholder="https://企业招聘官网/具体岗位" />
+              <p class="card-tip">求职者将在此官网完成投递；提交岗位审核前必须填写链接。</p>
+            </el-form-item>
             <el-form-item label="岗位职责描述" prop="description">
               <el-input
                 v-model="form.description"
@@ -240,7 +244,8 @@ const submitting = ref(false)
 
 const form = reactive({
   title: '',
-  department_id: 1,
+  official_apply_url: '',
+  department_id: null as number | null,
   city: '深圳',
   salary_min: 20,
   salary_max: 35,
@@ -340,6 +345,10 @@ const handleRunJDParse = async () => {
 
 // 保存/提交
 const handleSave = async (statusTarget: 'DRAFT' | 'PENDING_REVIEW') => {
+  if (statusTarget === 'PENDING_REVIEW' && !form.official_apply_url.trim()) {
+    ElMessage.warning('请填写企业官网招聘链接')
+    return
+  }
   if (totalWeight.value !== 100) {
     ElMessage.error('五维胜任力权重总和必须等于 100%')
     return
@@ -352,7 +361,8 @@ const handleSave = async (statusTarget: 'DRAFT' | 'PENDING_REVIEW') => {
     try {
       const payload: any = {
         title: form.title,
-        department_id: form.department_id,
+        official_apply_url: form.official_apply_url || null,
+        department_id: form.department_id || null,
         city: form.city,
         salary_min: form.salary_min,
         salary_max: form.salary_max,
@@ -361,14 +371,16 @@ const handleSave = async (statusTarget: 'DRAFT' | 'PENDING_REVIEW') => {
         education: form.education,
         headcount: form.headcount,
         description: form.description,
+        duties: form.description,
+        experience: `${form.experience_min}-${form.experience_max}年`,
         requirements: form.requirements,
-        skills: form.skills.map(s => ({ skill_name: s, weight: 1, is_required: true })),
+        skills: form.skills.map(s => ({ skill_name: s, level: '熟练', required: true })),
         competencies: [
-          { dimension: '专业技能', weight: form.weights.skills },
-          { dimension: '项目经验', weight: form.weights.experience },
-          { dimension: '逻辑分析', weight: form.weights.logic },
-          { dimension: '沟通协作', weight: form.weights.communication },
-          { dimension: '学习敏锐', weight: form.weights.learning }
+          { competency_name: '专业技能', weight: form.weights.skills },
+          { competency_name: '项目经验', weight: form.weights.experience },
+          { competency_name: '逻辑分析', weight: form.weights.logic },
+          { competency_name: '沟通协作', weight: form.weights.communication },
+          { competency_name: '学习敏锐', weight: form.weights.learning }
         ]
       }
 
@@ -400,7 +412,8 @@ onMounted(async () => {
       const res: any = await enterpriseApi.getJob(Number(route.params.id))
       if (res) {
         form.title = res.title || ''
-        form.department_id = res.department_id || 1
+        form.official_apply_url = res.official_apply_url || ''
+        form.department_id = res.department_id || null
         form.city = res.city || ''
         form.salary_min = res.salary_min || 15
         form.salary_max = res.salary_max || 30

@@ -1,5 +1,6 @@
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+from app.services.official_apply import validate_official_url
 from datetime import datetime
 
 class SkillRequirement(BaseModel):
@@ -14,6 +15,8 @@ class CompetencyWeight(BaseModel):
 
 class JobCreate(BaseModel):
     title: str
+    official_apply_url: Optional[str] = None
+    _validate_url = field_validator("official_apply_url")(validate_official_url)
     department_id: Optional[int] = None
     category: str = "后端开发"
     city: str
@@ -35,6 +38,7 @@ class JobUpdate(JobCreate):
 
 class JobOut(BaseModel):
     id: int
+    official_apply_url: Optional[str] = None
     company_id: int
     company_name: Optional[str] = None
     company_logo: Optional[str] = None

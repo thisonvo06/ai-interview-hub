@@ -1,3 +1,4 @@
+from app.services.matching import application_match_score
 import json
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -58,7 +59,7 @@ def get_enterprise_dashboard(
             "id": c.id,
             "name": c_name,
             "job_title": c.job.title if c.job else "",
-            "match_score": c.match_score,
+            "match_score": application_match_score(c),
             "status": c.status,
             "created_at": c.created_at.strftime("%m-%d %H:%M")
         })
@@ -86,8 +87,8 @@ def get_enterprise_dashboard(
         },
         "today_todos": [
             {"title": "初筛 Java 后端工程师新投递简历", "count": new_apps, "link": "/enterprise/candidates?status=SUBMITTED"},
-            {"title": "查看已完成 AI 面试的候选人报告", "count": 2, "link": "/enterprise/candidates?status=AI_INTERVIEW_DONE"},
-            {"title": "复核用人部门反馈并发出 Offer", "count": 1, "link": "/enterprise/pipeline"}
+            {"title": "查看已完成 AI 面试的候选人报告", "count": db.query(Application).filter(Application.job_id.in_(job_ids), Application.status == "AI_INTERVIEW_DONE").count(), "link": "/enterprise/candidates?status=AI_INTERVIEW_DONE"},
+            {"title": "复核用人部门反馈并发出 Offer", "count": db.query(Application).filter(Application.job_id.in_(job_ids), Application.status == "OFFER").count(), "link": "/enterprise/pipeline"}
         ],
         "recruitment_funnel": funnel,
         "recent_candidates": c_list,
@@ -115,6 +116,7 @@ def list_enterprise_jobs(
             department_id=j.department_id,
             department_name=j.department.name if j.department else None,
             title=j.title,
+        official_apply_url=j.official_apply_url,
             category=j.category,
             city=j.city,
             salary_min=j.salary_min,
@@ -161,6 +163,7 @@ def create_enterprise_job(
         company_id=member.company_id,
         department_id=req.department_id,
         title=req.title,
+        official_apply_url=req.official_apply_url,
         category=req.category,
         city=req.city,
         salary_min=req.salary_min,
@@ -196,6 +199,7 @@ def create_enterprise_job(
         company_id=job.company_id,
         company_name=company.name,
         title=job.title,
+        official_apply_url=job.official_apply_url,
         category=job.category,
         city=job.city,
         salary_min=job.salary_min,
@@ -228,6 +232,7 @@ def get_enterprise_job(id: int, member: CompanyMember = Depends(get_enterprise_m
         company_id=job.company_id,
         company_name=job.company.name if job.company else "",
         title=job.title,
+        official_apply_url=job.official_apply_url,
         category=job.category,
         city=job.city,
         salary_min=job.salary_min,
@@ -278,6 +283,7 @@ def update_enterprise_job(id: int, req: JobUpdate, member: CompanyMember = Depen
         company_id=job.company_id,
         company_name=job.company.name if job.company else "",
         title=job.title,
+        official_apply_url=job.official_apply_url,
         category=job.category,
         city=job.city,
         salary_min=job.salary_min,
@@ -325,6 +331,8 @@ def submit_job_for_review(id: int, member: CompanyMember = Depends(get_enterpris
     if not job:
         raise HTTPException(status_code=404, detail="岗位不存在")
 
+    if not job.official_apply_url:
+        raise HTTPException(400, "请先填写企业官网招聘链接，再提交审核")
     job.status = "PENDING_REVIEW"
     db.commit()
     log_operation(db, member.user_id, member.user.email, member.role_code, "SUBMIT_JOB_REVIEW", "JOB", job.id, f"提交岗位【{job.title}】至平台审核")
@@ -454,7 +462,7 @@ def list_candidates(
             company_name=member.company.name,
             resume_id=a.resume_id,
             status=a.status,
-            match_score=a.match_score,
+            match_score=application_match_score(a),
             reject_reason=a.reject_reason,
             withdraw_reason=a.withdraw_reason,
             assigned_recruiter_id=a.assigned_recruiter_id,
@@ -523,7 +531,7 @@ def get_candidate_detail(
         "job_id": app.job_id,
         "job_title": app.job.title if app.job else "",
         "status": app.status,
-        "match_score": app.match_score,
+        "match_score": application_match_score(app),
         "assigned_recruiter_id": app.assigned_recruiter_id,
         "is_in_talent_pool": app.is_in_talent_pool,
         "resume_snapshot": snapshot,
@@ -550,6 +558,17 @@ def advance_candidate(
     # State transition machine check:
     # SUBMITTED -> VIEWED -> AI_SCREENING -> AI_INTERVIEW_PENDING -> AI_INTERVIEW_DONE -> ENTERPRISE_INTERVIEW -> OFFER -> HIRED
     old_status = app.status
+    transitions = {
+        "SUBMITTED": {"VIEWED", "AI_SCREENING", "REJECTED"},
+        "VIEWED": {"AI_SCREENING", "REJECTED"},
+        "AI_SCREENING": {"AI_INTERVIEW_PENDING", "REJECTED"},
+        "AI_INTERVIEW_PENDING": {"AI_INTERVIEW_DONE", "ENTERPRISE_INTERVIEW", "REJECTED"},
+        "AI_INTERVIEW_DONE": {"ENTERPRISE_INTERVIEW", "OFFER", "REJECTED"},
+        "ENTERPRISE_INTERVIEW": {"OFFER", "REJECTED"},
+        "OFFER": {"HIRED", "REJECTED"},
+    }
+    if req.to_status not in transitions.get(old_status, set()):
+        raise HTTPException(409, "不允许从当前招聘阶段推进到目标阶段")
     app.status = req.to_status
     if req.to_status == "REJECTED":
         app.reject_reason = req.reject_reason or "经综合评估，目前暂不匹配当前职位需求"
@@ -649,7 +668,7 @@ def get_recruitment_pipeline(
             "name": a.user.profile.name if a.user and a.user.profile else "求职者",
             "school": a.user.profile.school if a.user and a.user.profile else "",
             "job_title": a.job.title if a.job else "",
-            "match_score": a.match_score,
+            "match_score": application_match_score(a),
             "updated_at": a.updated_at.strftime("%m-%d")
         })
 
@@ -781,7 +800,7 @@ def list_talent_pool(member: CompanyMember = Depends(get_enterprise_member), db:
             "school": a.user.profile.school if a.user and a.user.profile else "",
             "education": a.user.profile.education if a.user and a.user.profile else "本科",
             "job_title": a.job.title if a.job else "",
-            "match_score": a.match_score,
+            "match_score": application_match_score(a),
             "tags": [t.tag for t in a.tags],
             "last_active": a.updated_at.strftime("%Y-%m-%d")
         })
@@ -812,46 +831,8 @@ def get_enterprise_analytics(
     member: CompanyMember = Depends(get_enterprise_member),
     db: Session = Depends(get_db)
 ):
-    job_query = db.query(Job).filter(Job.company_id == member.company_id)
-    if job_id:
-        job_query = job_query.filter(Job.id == job_id)
-    jobs = job_query.all()
-    job_ids = [j.id for j in jobs]
-
-    total_apps = db.query(Application).filter(Application.job_id.in_(job_ids)).count()
-    hired_count = db.query(Application).filter(Application.job_id.in_(job_ids), Application.status == "HIRED").count()
-    interview_count = db.query(Application).filter(Application.job_id.in_(job_ids), Application.status.in_(["AI_INTERVIEW_DONE", "ENTERPRISE_INTERVIEW", "OFFER", "HIRED"])).count()
-
-    funnel_data = [
-        {"stage": "投递简历", "count": max(total_apps, 45)},
-        {"stage": "AI 初筛通过", "count": max(int(total_apps * 0.7), 32)},
-        {"stage": "面试推进", "count": max(interview_count, 18)},
-        {"stage": "录用 Offer", "count": max(hired_count, 6)}
-    ]
-
-    job_performance = [
-        {"title": j.title, "views": 240, "applications": 12, "hired": 1}
-        for j in jobs[:5]
-    ] or [
-        {"title": "Java后端工程师", "views": 520, "applications": 28, "hired": 2},
-        {"title": "前端开发工程师", "views": 380, "applications": 16, "hired": 1}
-    ]
-
-    return ResponseModel(data={
-        "kpis": {
-            "total_applications": total_apps or 45,
-            "interview_rate": 65,
-            "avg_days_to_hire": 7.5,
-            "hired_count": hired_count or 6
-        },
-        "funnel": funnel_data,
-        "job_performance": job_performance,
-        "candidate_sources": [
-            {"source": "岗位广场自然投递", "percentage": 75},
-            {"source": "人才库回捞", "percentage": 15},
-            {"source": "员工内推", "percentage": 10}
-        ]
-    })
+    from app.services.analytics import recruitment_metrics
+    return ResponseModel(data=recruitment_metrics(db, member.company_id, range, job_id))
 
 @router.get("/enterprise/members", response_model=ResponseModel[List[CompanyMemberOut]])
 def list_company_members(member: CompanyMember = Depends(get_enterprise_member), db: Session = Depends(get_db)):
