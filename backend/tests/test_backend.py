@@ -101,16 +101,19 @@ def test_core_pipeline_advancement():
     huawei_app = next(a for a in my_apps if a["company_name"] == "华为技术有限公司")
     target_app_id = huawei_app["id"]
 
-    # Recruiter advances application to OFFER
+    # Recruiter must follow the allowed pipeline transitions.
     hr_token = client.post("/api/v1/auth/login", json={"account": "hr@example.com", "password": "123456"}).json()["data"]["access_token"]
     hr_headers = {"Authorization": f"Bearer {hr_token}"}
-
-    res_adv = client.post(
-        f"/api/v1/enterprise/candidates/{target_app_id}/advance",
-        headers=hr_headers,
-        json={"to_status": "OFFER", "note": "技术终面综合评定卓越，发放意向录用Offer"}
-    )
-    assert res_adv.status_code == 200
+    steps = {"SUBMITTED": "VIEWED", "VIEWED": "AI_SCREENING", "AI_SCREENING": "AI_INTERVIEW_PENDING",
+             "AI_INTERVIEW_PENDING": "AI_INTERVIEW_DONE", "AI_INTERVIEW_DONE": "ENTERPRISE_INTERVIEW",
+             "ENTERPRISE_INTERVIEW": "OFFER"}
+    status = huawei_app["status"]
+    while status != "OFFER":
+        target = steps[status]
+        res_adv = client.post(f"/api/v1/enterprise/candidates/{target_app_id}/advance", headers=hr_headers,
+                             json={"to_status": target, "note": "按照合法流程推进测试候选人"})
+        assert res_adv.status_code == 200, res_adv.text
+        status = target
 
     # Student verifies updated status
     res_app = client.get(f"/api/v1/applications/{target_app_id}", headers=student_headers)

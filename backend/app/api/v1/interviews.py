@@ -23,7 +23,7 @@ from app.services.paper_builder import (
 from app.services.interview_core import (
     build_jd_text, build_resume_context, load_interview_context,
     build_ai_reference_points, get_remaining_seconds, mark_question_shown,
-    submit_answer_core, finalize_interview
+    submit_answer_core, finalize_interview, transition_interview
 )
 from app.schemas.common import ResponseModel
 from app.schemas.interview import (
@@ -132,6 +132,7 @@ def build_interview_out(interview: Interview) -> InterviewOut:
                 "evidence": json.loads(e.evidence_json) if e.evidence_json else [],
                 "weaknesses": json.loads(e.weaknesses_json) if e.weaknesses_json else [],
                 "suggestions": json.loads(e.suggestions_json) if e.suggestions_json else [],
+                "provenance": json.loads(e.provenance_json or "{}"),
                 "next_action": e.next_action
             }
         q_outs.append(q_item)
@@ -143,6 +144,7 @@ def build_interview_out(interview: Interview) -> InterviewOut:
         job_title = interview.job.title
 
     return InterviewOut(
+        version=interview.version, report_state=interview.report_state, learning_state=interview.learning_state,
         id=interview.id,
         user_id=interview.user_id,
         company_id=interview.company_id,
@@ -243,12 +245,25 @@ def get_bank_stats(current_user: User = Depends(require_auth), db: Session = Dep
 
 @router.post("/interviews", response_model=ResponseModel[InterviewOut])
 async def create_interview(req: InterviewCreate, current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
+    if req.type != "PERSONAL_TRAINING":
+        raise HTTPException(409, "正式招聘面试请通过本人收到的企业邀请进入")
+    if req.application_id:
+        from app.models.application import Application
+        application = db.query(Application).filter_by(id=req.application_id, user_id=current_user.id).first()
+        if not application:
+            raise HTTPException(403, "只能关联本人的申请")
+        if req.job_id and application.job_id != req.job_id:
+            raise HTTPException(409, "申请与所选岗位不一致")
+        req.job_id = application.job_id
+    if req.derived_from_id and not db.query(Interview).filter_by(id=req.derived_from_id, user_id=current_user.id).first():
+        raise HTTPException(403, "只能重练本人的面试")
     job_title = "Java后端开发工程师"
     job = None
     if req.job_id:
         job = db.query(Job).filter(Job.id == req.job_id).first()
-        if job:
-            job_title = job.title
+        if not job or job.status != "PUBLISHED":
+            raise HTTPException(404, "岗位不存在或已停止招聘")
+        job_title = job.title
 
     # 若未显式传入 JD 文本，则从所选岗位自动带出
     jd_text = build_jd_text(job, req.jd_text)
@@ -258,8 +273,11 @@ async def create_interview(req: InterviewCreate, current_user: User = Depends(re
     if req.resume_id:
         resume = db.query(Resume).filter(
             Resume.id == req.resume_id,
-            Resume.user_id == current_user.id
+            Resume.user_id == current_user.id,
+            Resume.is_deleted == False
         ).first()
+        if not resume:
+            raise HTTPException(404, "简历不存在或不属于本人")
     if not resume:
         resume = db.query(Resume).filter(
             Resume.user_id == current_user.id,
@@ -621,7 +639,8 @@ def get_interview(id: int, current_user: User = Depends(require_auth), db: Sessi
         # For enterprise recruitment, check if user belongs to this company
         user_roles = [r.role_code for r in current_user.roles]
         if "SUPER_ADMIN" not in user_roles:
-            is_company = any(r.company_id == interview.company_id for r in current_user.roles if r.company_id)
+            from app.models.company import CompanyMember
+            is_company = interview.privacy_scope == "COMPANY_AUTHORIZED" and db.query(CompanyMember).filter_by(user_id=current_user.id, company_id=interview.company_id, status="ACTIVE").first()
             if not is_company:
                 raise HTTPException(status_code=403, detail="无权访问该面试记录")
 
@@ -633,13 +652,7 @@ def start_interview(id: int, current_user: User = Depends(require_auth), db: Ses
     if not interview:
         raise HTTPException(status_code=404, detail="面试不存在")
 
-    state_machine.ensure(interview.status, state_machine.CAN_START, "开始面试")
-    interview.status = "IN_PROGRESS"
-    if not interview.started_at:
-        interview.started_at = datetime.utcnow()
-    if not interview.current_question_shown_at:
-        mark_question_shown(interview)
-    db.commit()
+    transition_interview(db, interview, "start")
     return ResponseModel(data={
         "status": interview.status,
         "remaining_seconds": get_remaining_seconds(interview),
@@ -652,10 +665,7 @@ def pause_interview(id: int, current_user: User = Depends(require_auth), db: Ses
     if not interview:
         raise HTTPException(status_code=404, detail="面试不存在")
 
-    state_machine.ensure(interview.status, state_machine.CAN_PAUSE, "暂停面试")
-    interview.status = "PAUSED"
-    interview.paused_at = datetime.utcnow()
-    db.commit()
+    transition_interview(db, interview, "pause")
     return ResponseModel(data={"status": "PAUSED", "message": "面试已暂停"})
 
 @router.post("/interviews/{id}/resume", response_model=ResponseModel[dict])
@@ -664,17 +674,7 @@ def resume_interview(id: int, current_user: User = Depends(require_auth), db: Se
     if not interview:
         raise HTTPException(status_code=404, detail="面试不存在")
 
-    state_machine.ensure(interview.status, state_machine.CAN_RESUME, "继续面试")
-    interview.status = "IN_PROGRESS"
-    # 暂停时长不计入单题用时与整场用时：把锚点整体后移
-    if interview.paused_at:
-        gap = datetime.utcnow() - interview.paused_at
-        if interview.current_question_shown_at:
-            interview.current_question_shown_at += gap
-        if interview.started_at:
-            interview.started_at += gap
-        interview.paused_at = None
-    db.commit()
+    transition_interview(db, interview, "resume")
     return ResponseModel(data={
         "status": "IN_PROGRESS",
         "remaining_seconds": get_remaining_seconds(interview),
@@ -688,10 +688,7 @@ def abort_interview(id: int, current_user: User = Depends(require_auth), db: Ses
     if not interview:
         raise HTTPException(status_code=404, detail="面试不存在")
 
-    state_machine.ensure(interview.status, state_machine.CAN_ABORT, "中止面试")
-    interview.status = "CANCELLED"
-    interview.ended_at = datetime.utcnow()
-    db.commit()
+    transition_interview(db, interview, "abort")
     log_operation(db, current_user.id, current_user.email, "PERSONAL", "ABORT_INTERVIEW",
                   "INTERVIEW", id, "中止模拟面试（未生成报告）")
     return ResponseModel(data={"status": "CANCELLED", "message": "面试已中止"})
@@ -706,7 +703,7 @@ async def answer_interview_question(id: int, req: InterviewAnswerRequest, curren
     result = await submit_answer_core(
         db, interview, current_user,
         text=req.text, duration_sec=req.duration_sec,
-        skipped=req.skipped
+        skipped=req.skipped, question_id=req.question_id, request_id=req.request_id, expected_version=req.expected_version
     )
     eval_res = result["eval_res"]
     next_q = result["next_question"]
@@ -714,6 +711,7 @@ async def answer_interview_question(id: int, req: InterviewAnswerRequest, curren
     next_q_out = question_to_out(next_q, reveal_reference=False) if next_q else None
 
     return ResponseModel(data=AnswerEvaluationOut(
+        provenance=eval_res.get("provenance", {}), version=result["version"], report_state=result.get("report_state", "PENDING"),
         answer_id=result["answer"].id,
         total_score=eval_res["score"],
         dimensions=eval_res["dimensions"],
@@ -727,7 +725,7 @@ async def answer_interview_question(id: int, req: InterviewAnswerRequest, curren
         is_finished=result["finished"],
         report_id=result.get("report_id"),
         remaining_seconds=result["remaining_seconds"],
-        total_questions=interview.total_questions,
+        total_questions=result["total_questions"],
         raw_score=result.get("raw_score"),
         overtime=result.get("overtime", False),
         overtime_sec=result.get("overtime_sec", 0),
@@ -765,7 +763,8 @@ def get_interview_report(id: int, current_user: User = Depends(require_auth), db
         # If enterprise recruitment, verify user belongs to company
         user_roles = [r.role_code for r in current_user.roles]
         if "SUPER_ADMIN" not in user_roles:
-            is_company = any(r.company_id == interview.company_id for r in current_user.roles if r.company_id)
+            from app.models.company import CompanyMember
+            is_company = interview.privacy_scope == "COMPANY_AUTHORIZED" and db.query(CompanyMember).filter_by(user_id=current_user.id, company_id=interview.company_id, status="ACTIVE").first()
             if not is_company:
                 raise HTTPException(status_code=403, detail="无权访问该企业面试报告")
 
@@ -813,7 +812,8 @@ def get_interview_report(id: int, current_user: User = Depends(require_auth), db
                 "evidence": json.loads(e.evidence_json) if e.evidence_json else [],
                 "weaknesses": json.loads(e.weaknesses_json) if e.weaknesses_json else [],
                 "missing_knowledge": json.loads(e.missing_knowledge_json) if e.missing_knowledge_json else [],
-                "suggestions": json.loads(e.suggestions_json) if e.suggestions_json else []
+                "suggestions": json.loads(e.suggestions_json) if e.suggestions_json else [],
+                "provenance": json.loads(e.provenance_json or "{}")
             })
             per_question_time.append({
                 "seq": q.seq, "skill_name": q.skill_name,
@@ -842,6 +842,7 @@ def get_interview_report(id: int, current_user: User = Depends(require_auth), db
         }
 
     return ResponseModel(data=InterviewReportOut(
+        provenance=json.loads(report.provenance_json or "{}"), learning_state=interview.learning_state,
         id=report.id,
         interview_id=report.interview_id,
         user_id=report.user_id,

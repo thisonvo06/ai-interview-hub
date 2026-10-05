@@ -13,7 +13,7 @@
         <div class="job-header-card zh-card">
           <div class="header-left-wrap">
             <div class="header-comp-logo">
-              <img v-if="job.company_logo" :src="job.company_logo" class="logo-img" alt="logo" />
+              <img v-if="job.company_logo && !logoFailed" :src="job.company_logo" class="logo-img" :alt="job.company_name" @error="logoFailed = true" />
               <div v-else class="logo-fallback">{{ (job.company_name || '智')[0] }}</div>
             </div>
 
@@ -22,7 +22,7 @@
                 <h1 class="title">{{ job.title }}</h1>
                 <el-tag v-if="job.status === 'PUBLISHED'" type="success" size="small">招聘中</el-tag>
                 <el-tag v-else type="info" size="small">已关闭/暂停</el-tag>
-                <el-tag size="small" type="primary" effect="light">已官方认证</el-tag>
+                <el-tag size="small" type="primary" effect="light">官网投递</el-tag>
               </div>
 
               <div class="company-row">
@@ -51,16 +51,19 @@
               {{ job.is_favorited ? '已收藏' : '收藏职位' }}
             </el-button>
 
-            <el-button
-              type="primary"
-              size="large"
-              class="apply-btn"
-              :disabled="job.status !== 'PUBLISHED'"
-              @click="openApplyDialog"
-            >
-              立即投递简历
-            </el-button>
+            <a v-if="job.official_apply_url && job.status === 'PUBLISHED'" :href="job.official_apply_url"
+              target="_blank" rel="noopener noreferrer" class="official-link" @click="recordVisit">
+              前往企业官网 ↗
+            </a>
+            <el-button v-else size="large" disabled>{{ job.status === 'PUBLISHED' ? '暂无官网链接' : '招聘已暂停' }}</el-button>
+            <el-button v-if="authStore.isPersonal && job.status === 'PUBLISHED'" size="large" :loading="savingPlan" @click="addToPlan">加入求职计划</el-button>
           </div>
+        </div>
+
+        <div class="official-notice">
+          <span class="channel-badge">官网投递</span>
+          <p>在企业招聘官网完成简历提交。这里的岗位信息供探索与训练参考，实际职位和要求以官网为准。</p>
+          <router-link v-if="authStore.isPersonal" to="/personal/applications">管理我的投递进度 →</router-link>
         </div>
 
         <!-- Detail Layout (Left Main Tabs, Right AI Matching & Company Info) -->
@@ -99,7 +102,7 @@
                         <span class="comp-name">{{ c.competency_name }}</span>
                         <span class="comp-weight">权重: {{ c.weight }}% · 基准分: {{ c.required_score }}分</span>
                       </div>
-                      <el-progress :percentage="c.weight * 2" :stroke-width="8" :show-text="false" color="#2563EB" />
+                      <el-progress :percentage="Math.min(100, Math.max(0, c.weight))" :stroke-width="8" :show-text="false" color="#2563EB" />
                     </div>
                   </div>
                 </div>
@@ -109,7 +112,7 @@
                 <div class="section-block">
                   <h3 class="block-title">关于 {{ job.company_name }}</h3>
                   <p class="text-content">
-                    我们致力于为全球用户提供卓越的技术产品与服务生态。公司拥有健全的人才晋升机制、完善的导师带教体系以及丰厚的福利保障。
+                    查看企业主页了解已登记的公司介绍；招聘与待遇信息请以企业官网为准。
                   </p>
                   <router-link :to="`/companies/${job.company_id}`">
                     <el-button type="primary" plain style="margin-top: 16px;">进入企业公开主页查看在招职位 →</el-button>
@@ -125,20 +128,20 @@
             <div class="zh-card match-card">
               <div class="match-header">
                 <el-icon :size="20" color="#2563EB"><Cpu /></el-icon>
-                <h4 class="match-title">AI 人岗匹配度诊断</h4>
+                <h4 class="match-title">你的技能与这个岗位</h4>
               </div>
 
               <div v-if="authStore.isPersonal" class="match-body">
                 <div class="score-circle">
-                  <span class="score-num">{{ matchInfo?.overall_score || 88 }}</span>
+                  <span class="score-num">{{ matchInfo?.overall_score ?? matchInfo?.match_score ?? '—' }}</span>
                   <span class="score-unit">%</span>
                 </div>
-                <p class="match-summary">{{ matchInfo?.explanation || '你的技术栈与该岗位核心要求高度匹配！建议重点练习高并发实战与系统设计题。' }}</p>
+                <p class="match-summary">{{ matchInfo?.explanation || '完善简历技能后可查看匹配结果' }}</p>
 
                 <div class="match-skills-block">
                   <span class="block-tag green-tag">优势技能点</span>
                   <div class="skill-chips">
-                    <span v-for="s in matchInfo?.advantage_skills || ['Java', 'Spring Boot', 'MySQL']" :key="s" class="chip-item green-chip">
+                    <span v-for="s in matchInfo?.advantage_skills || []" :key="s" class="chip-item green-chip">
                       ✓ {{ s }}
                     </span>
                   </div>
@@ -147,7 +150,7 @@
                 <div class="match-skills-block">
                   <span class="block-tag orange-tag">建议拓展提升</span>
                   <div class="skill-chips">
-                    <span v-for="s in matchInfo?.missing_skills || ['大型分布式存储', '微服务限流容灾']" :key="s" class="chip-item orange-chip">
+                    <span v-for="s in matchInfo?.missing_skills || []" :key="s" class="chip-item orange-chip">
                       ⚡ {{ s }}
                     </span>
                   </div>
@@ -161,7 +164,7 @@
               </div>
 
               <div v-else class="guest-match-hint">
-                <p class="hint-text">登录个人求职账号后，系统将结合你的简历与能力画像自动生成精准匹配分与差距诊断。</p>
+                <p class="hint-text">登录并完善简历技能后，查看与岗位要求的交集，为面试选择练习方向。</p>
                 <router-link :to="`/login?redirect=${encodeURIComponent($route.fullPath)}`">
                   <el-button type="primary" plain>登录后查看匹配度</el-button>
                 </router-link>
@@ -178,7 +181,7 @@
                 </div>
                 <div class="meta-item">
                   <span class="lbl">发布日期</span>
-                  <span class="val">{{ job.created_at ? job.created_at.substring(0, 10) : '2026-05-18' }}</span>
+                  <span class="val">{{ job.created_at ? job.created_at.substring(0, 10) : '—' }}</span>
                 </div>
                 <div class="meta-item">
                   <span class="lbl">岗位性质</span>
@@ -186,7 +189,7 @@
                 </div>
                 <div class="meta-item">
                   <span class="lbl">所属行业</span>
-                  <span class="val">计算机软件 / 互联网</span>
+                  <span class="val">{{ job.category || '未登记' }}</span>
                 </div>
               </div>
             </div>
@@ -195,75 +198,19 @@
       </div>
     </StateContainer>
 
-    <!-- Apply Modal Dialog per Spec Section 4 P03 -->
-    <el-dialog
-      v-model="applyDialogVisible"
-      title="投递职位简历确认"
-      width="540px"
-      destroy-on-close
-    >
-      <div v-if="myResumes.length === 0" class="no-resume-guide">
-        <el-result
-          icon="warning"
-          title="尚未创建个人简历"
-          sub-title="投递前请先在简历中心创建或上传一份结构化简历"
-        >
-          <template #extra>
-            <el-button type="primary" @click="$router.push('/personal/resumes')">前往简历中心创建</el-button>
-          </template>
-        </el-result>
-      </div>
-
-      <div v-else class="apply-form-modal">
-        <el-form label-position="top">
-          <el-form-item label="选择投递简历版本" required>
-            <el-select v-model="selectedResumeId" placeholder="请选择简历" style="width: 100%;">
-              <el-option
-                v-for="r in myResumes"
-                :key="r.id"
-                :label="`${r.name} (完整度: ${r.completeness}%)`"
-                :value="r.id"
-              />
-            </el-select>
-          </el-form-item>
-
-          <el-form-item label="确认联系电话">
-            <el-input v-model="applicantPhone" placeholder="请输入手机号" />
-          </el-form-item>
-
-          <div class="apply-notice">
-            <el-icon color="#2563EB"><InfoFilled /></el-icon>
-            <span>点击确认投递后，系统将生成该版本简历快照并实时同步至【{{ job?.company_name }}】的候选人待筛选列表中。</span>
-          </div>
-        </el-form>
-      </div>
-
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="applyDialogVisible = false">取消</el-button>
-          <el-button
-            v-if="myResumes.length > 0"
-            type="primary"
-            :loading="submittingApply"
-            @click="handleConfirmApply"
-          >
-            确认投递
-          </el-button>
-        </span>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { jobApi, resumeApi, personalApi } from '@/api'
+import { jobApi, personalApi } from '@/api'
+import { jobSearchApi } from '@/api/jobSearch'
 import { useAuthStore } from '@/stores/auth'
 import StateContainer from '@/components/StateContainer.vue'
 import { ElMessage } from 'element-plus'
-import { Star, StarFilled, Cpu, InfoFilled } from '@element-plus/icons-vue'
-import type { JobItem, ResumeItem } from '@/types'
+import { Cpu } from '@element-plus/icons-vue'
+import type { JobItem } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -272,16 +219,14 @@ const authStore = useAuthStore()
 const loading = ref(true)
 const error = ref(false)
 const job = ref<JobItem | null>(null)
+const logoFailed = ref(false)
+const savingPlan = ref(false)
 const activeTab = ref('desc')
 
 const matchInfo = ref<any>(null)
-const applyDialogVisible = ref(false)
-const myResumes = ref<ResumeItem[]>([])
-const selectedResumeId = ref<number | null>(null)
-const applicantPhone = ref('13800138001')
-const submittingApply = ref(false)
-
 const fetchDetail = async () => {
+  logoFailed.value = false
+  matchInfo.value = null
   loading.value = true
   error.value = false
   try {
@@ -336,47 +281,25 @@ const toggleFav = async () => {
   }
 }
 
-const openApplyDialog = async () => {
-  if (!authStore.isAuthenticated) {
-    ElMessage.warning('请先登录求职账号后再投递')
-    router.push(`/login?redirect=${encodeURIComponent(route.fullPath)}`)
-    return
-  }
-  if (!authStore.isPersonal) {
-    ElMessage.error('企业账号不可投递职位')
-    return
-  }
-
-  // Load user resumes
+const recordVisit = async () => {
+  if (!job.value || !authStore.isPersonal) return
   try {
-    const list: any = await resumeApi.listResumes()
-    myResumes.value = list || []
-    if (myResumes.value.length > 0) {
-      const def = myResumes.value.find(r => r.is_default) || myResumes.value[0]
-      selectedResumeId.value = def.id
-    }
-    applyDialogVisible.value = true
-  } catch (e) {
-    ElMessage.error('加载简历失败')
+    await jobApi.recordOfficialVisit(job.value.id)
+    ElMessage.info('已记录官网访问；完成官网提交后，可在“我的求职”确认已投递')
+  } catch {
+    ElMessage.warning('投递笔记保存失败，可返回此页重试')
   }
 }
 
-const handleConfirmApply = async () => {
-  if (!selectedResumeId.value || !job.value) {
-    ElMessage.warning('请选择要投递的简历')
-    return
-  }
-
-  submittingApply.value = true
+const addToPlan = async () => {
+  if (!job.value || savingPlan.value) return
+  savingPlan.value = true
   try {
-    await jobApi.applyJob(job.value.id, { resume_id: selectedResumeId.value })
-    ElMessage.success('简历投递成功！已同步至企业候选人库，可在“我的求职”查看进度')
-    applyDialogVisible.value = false
-  } catch (e) {
-    // handled
-  } finally {
-    submittingApply.value = false
-  }
+    const result = await jobSearchApi.savePlatformJob(job.value.id)
+    ElMessage.success(result.duplicate ? '这个岗位已经在求职计划中' : '已加入求职计划，可继续分析与准备')
+    await router.push({ path: '/personal/job-search', query: { opportunity_id: result.item.id } })
+  } catch { /* API client displays the error */ }
+  finally { savingPlan.value = false }
 }
 
 onMounted(() => {
@@ -385,6 +308,13 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.official-link { display: inline-flex; align-items: center; justify-content: center; padding: 12px 22px; border-radius: 10px; background: #18796e; color: white; font-weight: 700; text-decoration: none; }
+.official-link:hover { background: #11665d; }
+.official-notice { display: flex; align-items: center; gap: 14px; padding: 18px 24px; margin-bottom: 24px; background: #edf7f5; border: 1px solid #c7e5dd; border-radius: 14px; color: #365e58; font-size: 13px; }
+.official-notice p { flex: 1; margin: 0; line-height: 1.7; }
+.channel-badge { font-weight: 700; white-space: nowrap; }
+@media (max-width: 768px) { .job-header-card, .header-left-wrap, .official-notice { flex-direction: column; align-items: flex-start; } .header-actions { flex-wrap: wrap; margin-top: 20px; } .tags-row, .title-row { flex-wrap: wrap; } .job-header-card, .left-main { padding: 22px; } }
+
 .job-detail-page {
   padding: 24px 0 64px;
 }

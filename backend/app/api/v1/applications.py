@@ -1,3 +1,4 @@
+from app.services.matching import application_match_score
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -51,7 +52,7 @@ def build_app_out(app: Application) -> ApplicationOut:
         company_logo=app.job.company.logo_url if app.job and app.job.company else None,
         resume_id=app.resume_id,
         status=app.status,
-        match_score=app.match_score,
+        match_score=application_match_score(app),
         reject_reason=app.reject_reason,
         withdraw_reason=app.withdraw_reason,
         assigned_recruiter_id=app.assigned_recruiter_id,
@@ -87,7 +88,8 @@ def get_application_detail(id: int, current_user: User = Depends(require_auth), 
     if app.user_id != current_user.id:
         user_roles = [r.role_code for r in current_user.roles]
         is_admin = "PLATFORM_ADMIN" in user_roles or "SUPER_ADMIN" in user_roles
-        is_company = any(r.company_id == app.job.company_id for r in current_user.roles if r.company_id)
+        from app.models.company import CompanyMember
+        is_company = db.query(CompanyMember).filter_by(user_id=current_user.id, company_id=app.job.company_id, status="ACTIVE").first() if app.job else None
         if not (is_admin or is_company):
             raise HTTPException(status_code=403, detail="无权查看该投递记录")
 

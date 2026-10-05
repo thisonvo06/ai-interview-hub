@@ -68,4 +68,5 @@ class CompetencyHistory(Base):
     score = Column(Float, nullable=False)
     source_type = Column(String(50), nullable=False)  # INTERVIEW, ASSESSMENT, RESUME, PRACTICE
     source_id = Column(Integer, nullable=True)
+    evidence_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

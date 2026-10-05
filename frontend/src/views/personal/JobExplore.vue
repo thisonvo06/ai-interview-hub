@@ -1,8 +1,8 @@
 <template>
   <div class="job-explore-page">
     <div class="header-box zh-card">
-      <h2 class="title">岗位智能探索与匹配</h2>
-      <p class="subtitle">系统基于你的当前能力模型与简历经历，实时计算确定性匹配分与技能差距解释</p>
+      <p class="editorial-kicker">OPPORTUNITIES / 发现下一程</p><h2 class="title">好机会，从这里开始。</h2>
+      <p class="subtitle">看看岗位要求与你的技能有哪些交集，再为下一次机会做好准备。</p>
     </div>
 
     <StateContainer :loading="loading" :empty="!loading && jobs.length === 0">
@@ -24,9 +24,9 @@
           <div class="match-bar">
             <div class="match-badge">
               <el-icon><Cpu /></el-icon>
-              <span>匹配度 <strong>{{ job.match_score || 90 }}%</strong></span>
+              <span>技能覆盖 <strong>{{ job.match_score == null ? '未测量' : job.match_score + '%' }}</strong></span>
             </div>
-            <span class="match-reason">{{ job.match_reason || '核心技能 Java/MySQL/Redis 高度匹配' }}</span>
+            <span class="match-reason">{{ job.match_reason || '补充简历技能后可查看覆盖情况' }}</span>
           </div>
 
           <div class="skills-row">

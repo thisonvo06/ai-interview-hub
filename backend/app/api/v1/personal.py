@@ -1,3 +1,4 @@
+from app.services.matching import application_match_score
 import json
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -12,8 +13,9 @@ from app.models.profile import (
 )
 from app.models.resume import Resume
 from app.models.job import Job, JobFavorite, JobCompetency
+from app.models.external_application import ExternalApplication
 from app.models.application import Application
-from app.models.interview import Interview, InterviewReport
+from app.models.interview import Interview, InterviewReport, InterviewAnswer
 from app.models.learning import LearningPlan, LearningTask
 from app.models.system import Notification, NotificationPreference, ConsentRecord, UserSession
 from app.schemas.common import ResponseModel
@@ -23,125 +25,8 @@ from app.data.learning_path_templates import match_role_template
 router = APIRouter(tags=["个人求职与成长中心"])
 
 
-def resolve_target_job(user: User, jd_text: Optional[str] = None) -> str:
-    """优先取用户求职意向中的目标岗位，其次回退默认岗位。"""
-    pref = user.career_preference
-    if pref and pref.target_job_title:
-        return pref.target_job_title
-    return "Java后端开发工程师"
-
-
-def get_candidate_skills(user: User, db: Session) -> List[str]:
-    """取候选人技能：优先默认简历的技能，其次能力图谱；都没有则返回空列表。"""
-    resume = db.query(Resume).filter(
-        Resume.user_id == user.id,
-        Resume.is_deleted == False
-    ).order_by(Resume.is_default.desc(), Resume.id.desc()).first()
-    if resume and resume.skills:
-        return [s.skill_name for s in resume.skills]
-    comps = db.query(UserCompetency).filter(UserCompetency.user_id == user.id).all()
-    if comps:
-        return [c.competency_name for c in comps]
-    return []
-
-
-def calc_match_score(candidate_skills: List[str], required_skills: List[str]):
-    """确定性技能匹配分（与 explain_job_match 的口径一致），返回 (score, reason)。"""
-    required = [r for r in (required_skills or []) if r]
-    if not required:
-        return 60, "岗位暂未标注技能要求，请查看详情"
-    c_set = {s.lower() for s in candidate_skills}
-    adv = [s for s in required if s.lower() in c_set]
-    missing = [s for s in required if s.lower() not in c_set]
-    score = min(98, max(60, int(60 + len(adv) * 8 - len(missing) * 4)))
-    if adv:
-        reason = f"匹配技能 {len(adv)} 项：{'、'.join(adv[:3])}" + (" 等" if len(adv) > 3 else "")
-    else:
-        reason = "暂未匹配到岗位技能，建议完善简历技能标签"
-    return score, reason
-
-
-def get_or_create_active_plan(db: Session, user: User, target_job_title: str) -> LearningPlan:
-    plan = db.query(LearningPlan).filter(
-        LearningPlan.user_id == user.id,
-        LearningPlan.status == "ACTIVE"
-    ).first()
-    if not plan:
-        plan = LearningPlan(user_id=user.id, target_job_title=target_job_title, status="ACTIVE")
-        db.add(plan)
-        db.commit()
-        db.refresh(plan)
-    elif target_job_title:
-        plan.target_job_title = target_job_title
-    return plan
-
-
-def _tasks_from_template(template: dict, gaps: Optional[List[str]] = None) -> List[dict]:
-    """模板骨架 + 基于面试薄弱项的确定性个性化：命中薄弱项的任务提升为 HIGH 并改写依据。"""
-    gap_set = [g.lower() for g in (gaps or []) if g]
-    tasks = []
-    for stage in template["stages"]:
-        for t in stage["tasks"]:
-            priority = t.get("priority", "MEDIUM")
-            reason = t.get("reason", "")
-            competency = (t.get("competency_name") or "").lower()
-            title = (t.get("title") or "").lower()
-            hit_gap = next((g for g in gap_set if g and (g in competency or g in title or competency in g)), None)
-            if hit_gap:
-                priority = "HIGH"
-                reason = f"最近面试薄弱项「{hit_gap}」相关，优先攻坚；{reason}"
-            tasks.append({
-                "title": t["title"],
-                "competency_name": t.get("competency_name", "综合能力"),
-                "stage": stage["stage"],
-                "priority": priority,
-                "reason": reason,
-                "action_type": t.get("action_type", "COURSE"),
-                "deliverable": t.get("deliverable"),
-                "resources": t.get("resources") or [],
-                "estimated_weeks": t.get("estimated_weeks", stage.get("estimated_weeks")),
-            })
-    return tasks
-
-
-async def generate_and_store_learning_plan(
-    db: Session,
-    user: User,
-    target_job_title: str,
-    jd_text: Optional[str] = None,
-    gaps: Optional[List[str]] = None,
-    replace: bool = False
-) -> LearningPlan:
-    """生成学习任务并按阶段落库：命中岗位模板库则用模板骨架（含产出物/资源/周期），
-    否则回退 AI 动态生成，供学习路线页分阶段展示。"""
-    plan = get_or_create_active_plan(db, user, target_job_title)
-    if replace:
-        db.query(LearningTask).filter(LearningTask.plan_id == plan.id).delete()
-        db.commit()
-
-    template = match_role_template(target_job_title, jd_text)
-    if template:
-        tasks = _tasks_from_template(template, gaps=gaps)
-    else:
-        tasks = await ai_provider.generate_learning_plan(target_job_title, gaps=gaps, jd_text=jd_text)
-
-    for idx, t in enumerate(tasks):
-        db.add(LearningTask(
-            plan_id=plan.id,
-            user_id=user.id,
-            title=t["title"],
-            competency_name=t.get("competency_name", "综合能力"),
-            stage=t.get("stage") or f"第{idx + 1}阶段 · 专项提升",
-            priority=t.get("priority", "HIGH"),
-            reason=t.get("reason", "针对目标岗位 JD 与薄弱项量身定制"),
-            action_type=t.get("action_type", "INTERVIEW_PRACTICE"),
-            deliverable=t.get("deliverable"),
-            resources_json=json.dumps(t.get("resources") or [], ensure_ascii=False),
-            estimated_weeks=t.get("estimated_weeks"),
-        ))
-    db.commit()
-    db.refresh(plan)
-    return plan
+from app.services.learning import resolve_target_job, get_or_create_active_plan, generate_and_store_learning_plan
+from app.services.matching import get_candidate_skills, calc_match_score
 
 @router.get("/personal/dashboard", response_model=ResponseModel[dict])
 def get_personal_dashboard(current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
@@ -154,19 +39,17 @@ def get_personal_dashboard(current_user: User = Depends(require_auth), db: Sessi
     ).order_by(InterviewReport.id.desc()).first()
     recent_score = recent_interview.total_score if recent_interview else None
 
-    applied_count = db.query(Application).filter(Application.user_id == current_user.id).count()
+    external = db.query(ExternalApplication).filter_by(user_id=current_user.id).all()
+    confirmed = [r for r in external if r.status in ("USER_SUBMITTED", "INTERVIEWING", "OFFER", "REJECTED")]
+    applied_count = len(confirmed)
     favorite_count = db.query(JobFavorite).filter(JobFavorite.user_id == current_user.id).count()
-    interview_count = db.query(Interview).filter(Interview.user_id == current_user.id).count()
-    # 按每场面试约 30 分钟折算真实训练时长
-    training_hours = round(interview_count * 0.5, 1)
+    week_start = datetime.utcnow() - timedelta(days=7)
+    answers = db.query(InterviewAnswer).join(Interview).filter(
+        Interview.user_id == current_user.id, InterviewAnswer.created_at >= week_start).all()
+    training_hours = round(sum(max(0, a.duration_sec or 0) for a in answers) / 3600, 2)
 
-    # Readiness score (0-100)：无面试得分时不计算，返回 None 由前端显示空态
-    resume = db.query(Resume).filter(Resume.user_id == current_user.id, Resume.is_deleted == False).first()
-    resume_comp = resume.completeness if resume else 60
-    readiness = None
-    if recent_score is not None:
-        readiness = int(recent_score * 0.4 + resume_comp * 0.35 + 20)
-        readiness = min(98, max(50, readiness))
+    resume = db.query(Resume).filter_by(user_id=current_user.id, is_deleted=False).order_by(Resume.is_default.desc()).first()
+    readiness = round(recent_score * 0.55 + resume.completeness * 0.45) if recent_score is not None and resume else None
 
     # Today tasks (max 3)
     plan = db.query(LearningPlan).filter(LearningPlan.user_id == current_user.id, LearningPlan.status == "ACTIVE").first()
@@ -188,18 +71,11 @@ def get_personal_dashboard(current_user: User = Depends(require_auth), db: Sessi
             })
     # 今日任务：无学习计划时返回空列表，由前端引导用户生成学习路线（不再塞写死任务）
 
-    # Recent applications
-    recent_apps = db.query(Application).filter(Application.user_id == current_user.id).order_by(Application.id.desc()).limit(3).all()
-    apps_data = []
-    for a in recent_apps:
-        apps_data.append({
-            "id": a.id,
-            "job_title": a.job.title if a.job else "",
-            "company_name": a.job.company.name if a.job and a.job.company else "",
-            "status": a.status,
-            "match_score": a.match_score,
-            "updated_at": a.updated_at.strftime("%m月%d日")
-        })
+    # 官网渠道进度均来自用户记录，不代表企业反馈。
+    recent_records = sorted(external, key=lambda r: r.updated_at, reverse=True)[:3]
+    apps_data = [{"id": r.id, "job_title": r.job_title, "company_name": r.company_name,
+                  "status": r.status, "channel": "OFFICIAL_WEBSITE", "status_source": "USER_REPORTED",
+                  "updated_at": r.updated_at.isoformat() + "Z"} for r in recent_records]
 
     # Recommended jobs
     rec_jobs = db.query(Job).filter(Job.status == "PUBLISHED").limit(3).all()
@@ -229,24 +105,8 @@ def get_personal_dashboard(current_user: User = Depends(require_auth), db: Sessi
             }
             for idx, r in enumerate(reports[-7:])
         ]
-        if len(growth_chart) == 1:
-            base_date = (reports[0].created_at - timedelta(days=7)).strftime("%m/%d") if reports[0].created_at else "前置评测"
-            growth_chart.insert(0, {"date": base_date, "score": max(55.0, round(reports[0].total_score - 10.0, 1))})
     else:
-        comp_hist = db.query(CompetencyHistory).filter(
-            CompetencyHistory.user_id == current_user.id
-        ).order_by(CompetencyHistory.created_at.asc()).all()
-        if comp_hist:
-            growth_chart = [
-                {
-                    "date": ch.created_at.strftime("%m/%d") if ch.created_at else f"评测{idx+1}",
-                    "score": round(ch.score, 1)
-                }
-                for idx, ch in enumerate(comp_hist[-5:])
-            ]
-        else:
-            # 无任何面试/能力历史时返回空数组，前端显示空态（不再写死 68/75/82 假曲线）
-            growth_chart = []
+        growth_chart = []
 
     return ResponseModel(data={
         "welcome": {
@@ -255,7 +115,7 @@ def get_personal_dashboard(current_user: User = Depends(require_auth), db: Sessi
             "target_cities": pref.target_cities if pref else None
         },
         "readiness_score": readiness,
-        "readiness_description": "基于近期模拟面试得分(40%)、简历完善度(35%)及核心技术掌握情况综合计算所得。",
+        "readiness_description": "参考近期模拟面试得分（55%）和简历完善度（45%），用于安排训练，不代表录用预测。",
         "metrics": {
             "recent_interview_score": recent_score,
             "applied_count": applied_count,
@@ -330,60 +190,21 @@ def get_assessment(job_id: Optional[int] = None, current_user: User = Depends(re
         for jc in job.competencies:
             required_map[jc.competency_name] = (jc.weight or 0.0, jc.required_score or 0.0)
 
-    # 3. 用户当前能力（最近一次面试报告的维度分）
-    current_map: dict = {}
-    latest_report = db.query(InterviewReport).filter(
-        InterviewReport.user_id == current_user.id
-    ).order_by(InterviewReport.id.desc()).first()
-    if latest_report and latest_report.dimension_scores_json:
-        try:
-            current_map = json.loads(latest_report.dimension_scores_json)
-        except Exception:
-            current_map = {}
-
-    # 4. 兜底用户能力均值（无面试记录时使用）
-    user_comps = db.query(UserCompetency).filter(UserCompetency.user_id == current_user.id).all()
-    fallback_score = round(sum(c.score for c in user_comps) / len(user_comps), 1) if user_comps else 60.0
-
-    # 5. 组装维度（岗位要求维度为主，合并报告维度）
-    dimensions = list(required_map.keys()) or ["专业基础", "项目经验", "系统设计", "沟通表达", "综合素质"]
-    for d in current_map.keys():
-        if d not in dimensions:
-            dimensions.append(d)
-
+    user_comps = db.query(UserCompetency).filter_by(user_id=current_user.id).all()
+    current_map = {c.competency_name: c.score for c in user_comps}
+    dimensions = list(required_map) or list(current_map)
     competencies = []
-    total_weight = 0.0
     for name in dimensions:
-        weight, required = required_map.get(name, (0.0, 0.0))
+        weight, required = required_map.get(name, (0.0, None))
         current = current_map.get(name)
-        if current is None:
-            current = fallback_score
-        if not required:
-            required = 80.0
-        if not weight:
-            weight = round(100.0 / len(dimensions), 1)
-        total_weight += weight
-        gap = max(0.0, round(required - current, 1))
-        competencies.append({
-            "name": name,
-            "current_score": round(current, 1),
-            "required_score": round(required, 1),
-            "gap": gap,
-            "weight": weight,
-            "evidence": "来源：最近一次模拟面试报告" if latest_report else "暂无面试记录，建议先完成一次模拟面试以获取能力诊断"
-        })
-
-    # 6. 综合契合指数（按权重加权）
-    overall_score = round(
-        sum(c["current_score"] * c["weight"] for c in competencies) / total_weight, 1
-    ) if total_weight else round(fallback_score, 1)
-
-    priorities = sorted(
-        [c for c in competencies if c["gap"] > 0],
-        key=lambda x: x["gap"] * x["weight"],
-        reverse=True
-    )
-
+        gap = round(max(0, required - current), 1) if current is not None and required is not None else None
+        competencies.append({"name": name, "current_score": current, "required_score": required,
+            "weight": weight, "gap": gap,
+            "evidence": "来源：该技能的有效面试证据" if current is not None else "此项尚无有效测量，请完成对应技能训练"})
+    measured = [c for c in competencies if c["current_score"] is not None and c["weight"] > 0]
+    total_weight = sum(c["weight"] for c in measured)
+    overall_score = round(sum(c["current_score"] * c["weight"] for c in measured) / total_weight, 1) if total_weight else None
+    priorities = sorted([c for c in competencies if c["gap"] is not None and c["gap"] > 0], key=lambda c: c["gap"] * c["weight"], reverse=True)
     return ResponseModel(data={
         "target_job": target_job_title,
         "overall_score": overall_score,
@@ -400,19 +221,20 @@ def get_assessment(job_id: Optional[int] = None, current_user: User = Depends(re
 def get_user_competencies(current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
     comps = db.query(UserCompetency).filter(UserCompetency.user_id == current_user.id).all()
     # 无能力记录时返回空列表（不再返回写死的 mock 能力分），由前端展示空态
-    return ResponseModel(data=[{"competency_name": c.competency_name, "score": c.score} for c in comps])
+    return ResponseModel(data=[{"competency_name": c.competency_name, "score": c.score, "confidence": c.confidence} for c in comps])
 
 @router.get("/personal/competencies/{skillId}/evidence", response_model=ResponseModel[dict])
 def get_competency_evidence(skillId: str, current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
     history = db.query(CompetencyHistory).filter(
-        CompetencyHistory.user_id == current_user.id
-    ).order_by(CompetencyHistory.id.desc()).limit(5).all()
+        CompetencyHistory.user_id == current_user.id,
+        CompetencyHistory.competency_name == skillId
+    ).order_by(CompetencyHistory.id.desc()).limit(20).all()
 
     return ResponseModel(data={
         "skill": skillId,
         # 无历史记录时返回空数组（不再返回写死的假证据链），由前端展示空态
         "history": [
-            {"score": h.score, "source_type": h.source_type, "date": h.created_at.strftime("%Y-%m-%d")}
+            {"score": h.score, "source_type": h.source_type, "source_id": h.source_id, "evidence": json.loads(h.evidence_json or "{}"), "date": h.created_at.strftime("%Y-%m-%d")}
             for h in history
         ]
     })

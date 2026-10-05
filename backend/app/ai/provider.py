@@ -15,11 +15,14 @@ from app.ai.mock_data import (
     generate_mock_report, generate_mock_learning_tasks
 )
 
+from app.services.ai_provenance import call_context, metadata, traced, PROMPT_VERSION
+
 logger = logging.getLogger("ai_provider")
 
 
 def _log_ai_call(business_type: str, model: str, tokens_in: int, tokens_out: int,
-                 latency_ms: int, status: str, error_code: str = None):
+                 latency_ms: int, status: str, error_code: str = None, result_source: str = "REAL"):
+
     """异步安全地将一次 AI 调用记入 AICallLog。"""
     from app.core.database import SessionLocal
     from app.models.system import AICallLog
@@ -27,6 +30,9 @@ def _log_ai_call(business_type: str, model: str, tokens_in: int, tokens_out: int
     try:
         db.add(AICallLog(
             business_type=business_type,
+            **call_context.get(),
+            prompt_version=PROMPT_VERSION,
+            result_source=result_source,
             model=model,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
@@ -37,7 +43,7 @@ def _log_ai_call(business_type: str, model: str, tokens_in: int, tokens_out: int
         ))
         db.commit()
     except Exception:
-        pass  # 日志落库失败不影响主流程
+        logger.exception("AI 调用日志写入失败")
     finally:
         db.close()
 
@@ -63,6 +69,10 @@ class AIProvider:
         """Calls real LLM API with fallback to mock if unreachable or unconfigured."""
         cfg = self._current_config()
         if cfg["mode"] == "mock" or not cfg["api_key"]:
+            reason = "MOCK_MODE" if cfg["mode"] == "mock" else "NO_API_KEY"
+            source = "MOCK" if cfg["mode"] == "mock" else "MOCK_FALLBACK"
+            metadata(source, "mock-ai", reason)
+            _log_ai_call(call_type, "mock-ai", 0, 0, 0, "MOCK" if source == "MOCK" else "FALLBACK", reason, source)
             return None
 
         headers = {
@@ -97,19 +107,24 @@ class AIProvider:
                     validated = schema_class(**parsed)
                     result = validated.model_dump()
                     _log_ai_call(call_type, cfg["model"], tokens_in, tokens_out, latency_ms, "SUCCESS")
+                    metadata("REAL", cfg["model"])
                     return result
                 else:
                     latency_ms = int((time.time() - started) * 1000)
                     error_code = f"HTTP_{res.status_code}"
                     status = "ERROR"
-                    _log_ai_call(call_type, cfg["model"], 0, 0, latency_ms, "ERROR", error_code)
+                    metadata("MOCK_FALLBACK", "mock-ai", error_code)
+                    _log_ai_call(call_type, cfg["model"], 0, 0, latency_ms, "FALLBACK", error_code, "MOCK_FALLBACK")
         except Exception as e:
             latency_ms = int((time.time() - started) * 1000)
-            logger.warning(f"Real LLM call failed, falling back to mock: {e}")
-            _log_ai_call(call_type, cfg["model"], 0, 0, latency_ms, "ERROR", str(e)[:100])
+            error_code = "TIMEOUT" if isinstance(e, httpx.TimeoutException) else "INVALID_RESULT" if isinstance(e, (ValueError, KeyError, IndexError)) else "PROVIDER_ERROR"
+            logger.warning("AI 调用降级：%s", error_code)
+            metadata("MOCK_FALLBACK", "mock-ai", error_code)
+            _log_ai_call(call_type, cfg["model"], 0, 0, latency_ms, "FALLBACK", error_code, "MOCK_FALLBACK")
             return None
         return None
 
+    @traced
     async def parse_resume(self, resume_text: str) -> Dict[str, Any]:
         """Parses resume text into structured entities."""
         prompt = f"Parse this resume into JSON:\n{resume_text}"
@@ -120,6 +135,7 @@ class AIProvider:
         validated = ResumeParseSchema(**MOCK_RESUME_PARSED)
         return validated.model_dump()
 
+    @traced
     async def parse_jd(self, jd_text: str) -> Dict[str, Any]:
         """Parses enterprise JD text into job fields and skill requirements."""
         prompt = f"Parse this Job Description into JSON:\n{jd_text}"
@@ -129,6 +145,7 @@ class AIProvider:
         validated = JDParseSchema(**MOCK_JD_PARSED)
         return validated.model_dump()
 
+    @traced
     async def generate_question(
         self,
         job_title: str,
@@ -195,6 +212,7 @@ class AIProvider:
         validated = QuestionGenSchema(**raw_q)
         return validated.model_dump()
 
+    @traced
     async def evaluate_answer(
         self, question_text: str, answer_text: str, seq: int, jd_text: str = None,
         resume_context: str = None, reference_points: List[str] = None
@@ -232,6 +250,7 @@ class AIProvider:
         validated = AnswerEvalSchema(**raw_eval)
         return validated.model_dump()
 
+    @traced
     async def generate_report(
         self, interview_id: int, total_questions: int, scores: List[float] = None,
         qa_pairs: List[Dict[str, Any]] = None, job_title: str = None
@@ -257,6 +276,7 @@ class AIProvider:
         validated = ReportGenSchema(**raw_report)
         return validated.model_dump()
 
+    @traced
     async def generate_learning_plan(
         self, job_title: str, gaps: List[str] = None, jd_text: str = None, count: int = 6
     ) -> List[Dict[str, Any]]:
@@ -281,6 +301,7 @@ class AIProvider:
         validated = LearningPlanSchema(tasks=tasks)
         return validated.model_dump()["tasks"]
 
+    @traced
     async def optimize_resume(self, resume_text: str, job_title: str = None) -> Dict[str, Any]:
         """Analyzes and diagnoses a resume, returning structured optimization advice."""
         prompt = (
@@ -312,6 +333,7 @@ class AIProvider:
             "keyword_enrichment": ["JVM调优", "Redis主从哨兵", "RocketMQ事务消息", "MySQL分库分表"]
         }
 
+    @traced
     async def rewrite_resume(self, resume_text: str, job_title: str = None) -> Dict[str, Any]:
         """Rewrites resume project/skill descriptions to be more compelling without fabricating facts."""
         prompt = (
@@ -334,25 +356,9 @@ class AIProvider:
         self, job_title: str, candidate_skills: List[str], required_skills: List[str]
     ) -> Dict[str, Any]:
         """Calculates deterministic match score and returns explanation."""
-        c_set = set(s.lower() for s in candidate_skills)
-        r_set = set(s.lower() for s in required_skills) if required_skills else {"java", "mysql", "redis", "spring boot"}
-
-        adv = [s for s in required_skills if s.lower() in c_set]
-        missing = [s for s in required_skills if s.lower() not in c_set]
-
-        if not adv and not missing:
-            adv = ["Java", "Spring Boot", "MySQL"]
-            missing = ["分布式系统"]
-
-        score = min(98, max(60, int(60 + len(adv) * 8 - len(missing) * 4)))
-
-        data = {
-            "match_score": score,
-            "advantage_skills": adv or ["Java", "MySQL"],
-            "missing_skills": missing or ["大型分布式实战"],
-            "explanation": f"候选人与【{job_title}】匹配度为 {score}%。熟练掌握核心技能 {', '.join(adv or ['Java'])}，但在 {', '.join(missing or ['分布式'])} 方面仍有深度拓展空间。"
-        }
-        validated = MatchExplainerSchema(**data)
-        return validated.model_dump()
+        from app.services.matching import skill_match
+        result = skill_match(candidate_skills, required_skills)
+        return {"match_score": result["score"], "advantage_skills": result["advantage_skills"],
+                "missing_skills": result["missing_skills"], "explanation": result["explanation"]}
 
 ai_provider = AIProvider()

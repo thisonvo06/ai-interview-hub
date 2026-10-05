@@ -33,7 +33,8 @@ class Settings(BaseSettings):
         os.path.abspath(os.path.join(os.path.dirname(__file__), '../../uploads')).replace('\\', '/')
     )
 
-    # SMTP (用于找回密码等邮件通知；未配置时回退为开发模式，重置令牌直接返回)
+    # SMTP (用于找回密码；未配置时不发送、不返回重置凭证)
+    FRONTEND_BASE_URL: str = "http://localhost:5173"
     SMTP_HOST: str = os.getenv("SMTP_HOST", "")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "465"))
     SMTP_USER: str = os.getenv("SMTP_USER", "")

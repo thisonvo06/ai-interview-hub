@@ -212,7 +212,7 @@
           </div>
         </el-form-item>
         <el-form-item label="流转目标阶段">
-          <el-select v-model="advanceForm.target_status" style="width: 100%;">
+          <el-select v-model="advanceForm.to_status" style="width: 100%;">
             <el-option label="AI 初筛 (AI_SCREENING)" value="AI_SCREENING" />
             <el-option label="安排企业面试 (ENTERPRISE_INTERVIEW)" value="ENTERPRISE_INTERVIEW" />
             <el-option label="发放 Offer (OFFER)" value="OFFER" />
@@ -220,7 +220,7 @@
             <el-option label="淘汰/不合适 (REJECTED)" value="REJECTED" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="advanceForm.target_status === 'REJECTED'" label="淘汰原因说明">
+        <el-form-item v-if="advanceForm.to_status === 'REJECTED'" label="淘汰原因说明">
           <el-select v-model="advanceForm.reject_reason" placeholder="选择原因" style="width: 100%;">
             <el-option label="专业技术要求不匹配" value="专业技术不符" />
             <el-option label="项目实战经验欠缺" value="经验不符" />
@@ -229,7 +229,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="操作评语">
-          <el-input v-model="advanceForm.comment" type="textarea" :rows="3" placeholder="填写说明..." />
+          <el-input v-model="advanceForm.note" type="textarea" :rows="3" placeholder="填写说明..." />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -296,26 +296,26 @@ const dialogTitle = ref('推进阶段')
 const activeCand = ref<any>(null)
 const advancing = ref(false)
 const advanceForm = reactive({
-  target_status: '',
+  to_status: '',
   reject_reason: '',
-  comment: ''
+  note: ''
 })
 
 const openAdvance = (cand: any, targetStatus: string) => {
   activeCand.value = cand
   dialogTitle.value = '推进候选人阶段'
-  advanceForm.target_status = targetStatus
+  advanceForm.to_status = targetStatus
   advanceForm.reject_reason = ''
-  advanceForm.comment = ''
+  advanceForm.note = ''
   showAdvanceDialog.value = true
 }
 
 const openReject = (cand: any) => {
   activeCand.value = cand
   dialogTitle.value = '淘汰候选人'
-  advanceForm.target_status = 'REJECTED'
+  advanceForm.to_status = 'REJECTED'
   advanceForm.reject_reason = '专业技术不符'
-  advanceForm.comment = '经评估与当前岗位要求存在差距'
+  advanceForm.note = '经评估与当前岗位要求存在差距'
   showAdvanceDialog.value = true
 }
 
@@ -324,9 +324,9 @@ const handleConfirmAdvance = async () => {
   advancing.value = true
   try {
     await enterpriseApi.advanceCandidate(activeCand.value.id, {
-      target_status: advanceForm.target_status,
-      reject_reason: advanceForm.target_status === 'REJECTED' ? advanceForm.reject_reason : undefined,
-      comment: advanceForm.comment
+      to_status: advanceForm.to_status,
+      reject_reason: advanceForm.to_status === 'REJECTED' ? advanceForm.reject_reason : undefined,
+      note: advanceForm.note
     })
     ElMessage.success('流转成功')
     showAdvanceDialog.value = false

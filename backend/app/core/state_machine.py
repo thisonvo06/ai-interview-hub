@@ -11,7 +11,7 @@
 from fastapi import HTTPException
 
 # 允许作答/推进的状态（COMPLETED 可重新进入继续作答）
-ANSWERABLE = {"READY", "IN_PROGRESS", "PAUSED", "COMPLETED"}
+ANSWERABLE = {"IN_PROGRESS"}
 # 可以流转到 IN_PROGRESS 的来源状态
 CAN_START = {"CREATED", "READY", "PAUSED"}
 CAN_PAUSE = {"IN_PROGRESS"}

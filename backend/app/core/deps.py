@@ -11,50 +11,25 @@ from app.models.system import OperationLog, UserSession
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
-def get_current_user(
-    db: Session = Depends(get_db),
-    token: Optional[str] = Depends(oauth2_scheme)
-) -> Optional[User]:
-    if not token:
-        return None
+def authenticate_token(db: Session, token: str, token_type: str = "access") -> User:
     payload = decode_token(token)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="登录凭证无效或已过期，请重新登录"
-        )
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="登录凭证异常"
-        )
-    user = db.query(User).filter(User.id == int(user_id)).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户不存在"
-        )
-    if user.status != "ACTIVE":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="账号已被禁用或处于限制状态"
-        )
-
-    # 校验会话是否被强制下线（仅对携带 jti 的新令牌生效，向后兼容旧令牌）
-    jti = payload.get("jti")
-    if jti:
-        session = db.query(UserSession).filter(UserSession.jti == jti).first()
-        if session and session.revoked_at is not None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="会话已被强制下线，请重新登录"
-            )
-        if session:
-            session.last_active_at = datetime.utcnow()
-            db.commit()
-
+    if not payload or payload.get("type", "access") != token_type:
+        raise HTTPException(401, "登录凭证无效或已过期，请重新登录")
+    try:
+        user_id = int(payload["sub"])
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(401, "登录凭证异常")
+    session = db.query(UserSession).filter_by(jti=payload.get("jti"), user_id=user_id).first()
+    if not session or session.revoked_at is not None:
+        raise HTTPException(401, "会话已失效，请重新登录")
+    user = db.query(User).filter_by(id=user_id).first()
+    if not user or user.status != "ACTIVE":
+        raise HTTPException(403, "账号已被禁用或不存在")
     return user
+
+
+def get_current_user(db: Session = Depends(get_db), token: Optional[str] = Depends(oauth2_scheme)) -> Optional[User]:
+    return authenticate_token(db, token) if token else None
 
 def require_auth(current_user: Optional[User] = Depends(get_current_user)) -> User:
     if not current_user:
@@ -95,6 +70,8 @@ def get_enterprise_member(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="您未加入任何企业或企业账号已被停用"
         )
+    if member.company.status == "SUSPENDED":
+        raise HTTPException(403, "该企业已被停用")
     return member
 
 def log_operation(

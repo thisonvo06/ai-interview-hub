@@ -26,7 +26,8 @@
         :title="form.mode === 'MOCK' ? '当前引擎模式：内置沙箱 (Mock)' : '当前引擎模式：真实大语言模型 (Real)'"
       />
 
-      <el-form :model="form" label-position="top" class="setup-form">
+      <el-alert v-if="!authStore.isAdmin" title="AI 服务由平台管理员维护，请先登录管理员账号再修改配置。" type="info" :closable="false" />
+      <el-form :disabled="!authStore.isAdmin" :model="form" label-position="top" class="setup-form">
         <el-form-item label="服务引擎模式">
           <el-radio-group v-model="form.mode">
             <el-radio-button label="REAL">真实大模型 (Real)</el-radio-button>
@@ -101,6 +102,8 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Cpu } from '@element-plus/icons-vue'
 import { publicApi } from '@/api'
+import { useAuthStore } from '@/stores/auth'
+const authStore = useAuthStore()
 
 const router = useRouter()
 

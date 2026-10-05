@@ -503,10 +503,15 @@ const toggleCamera = () => {
   }
 }
 
-const handlePauseResume = () => {
-  isPaused.value = !isPaused.value
-  if (isPaused.value && transcribing.value) stopTranscription()
-  ElMessage.info(isPaused.value ? '答题计时已暂停' : '已恢复答题')
+const handlePauseResume = async () => {
+  try {
+    const id = Number(route.params.id)
+    if (isPaused.value) await interviewApi.resumeInterview(id)
+    else await interviewApi.pauseInterview(id)
+    isPaused.value = !isPaused.value
+    if (isPaused.value && transcribing.value) stopTranscription()
+    ElMessage.info(isPaused.value ? '面试已暂停' : '已恢复答题')
+  } catch { /* API 已显示错误 */ }
 }
 
 const insertTemplate = () => {
@@ -520,8 +525,14 @@ const loadSession = async () => {
   error.value = false
   const interviewId = Number(route.params.id)
   try {
-    const res: any = await interviewApi.getInterview(interviewId)
+    let res: any = await interviewApi.getInterview(interviewId)
+    if (res.status === 'COMPLETED') { router.replace(`/personal/interviews/${interviewId}/report`); return }
+    if (['READY', 'CREATED'].includes(res.status)) {
+      await interviewApi.startInterview(interviewId)
+      res = await interviewApi.getInterview(interviewId)
+    }
     const data = res?.data || res
+    isPaused.value = data.status === 'PAUSED'
     session.value = data
     // 整场剩余时间以服务端 started_at 口径为准（刷新页面不会重置）
     if (typeof data?.remaining_seconds === 'number') {

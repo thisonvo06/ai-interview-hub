@@ -1,5 +1,7 @@
-from typing import List, Dict, Optional, Any
-from pydantic import BaseModel, Field
+from typing import List, Dict, Optional, Any, Literal, Annotated
+from pydantic import BaseModel, Field, field_validator
+
+Score = Annotated[float, Field(ge=0, le=100, allow_inf_nan=False)]
 
 class ResumeParseSchema(BaseModel):
     education: List[Dict[str, str]] = []
@@ -37,17 +39,23 @@ class QuestionGenSchema(BaseModel):
 
 class AnswerEvalSchema(BaseModel):
     score: float = Field(..., ge=0, le=100)
-    dimensions: Dict[str, float] # professional, relevance, completeness, logic, depth, communication
+    dimensions: Dict[str, Score]
+    @field_validator("dimensions")
+    @classmethod
+    def complete_rubric(cls, value):
+        if set(value) != {"professional", "relevance", "completeness", "logic", "depth", "communication"}:
+            raise ValueError("评分必须包含六个 Rubric 维度")
+        return value
     evidence: List[str]
     weaknesses: List[str]
     missing_knowledge: List[str]
     suggestions: List[str]
-    next_action: str # FOLLOW_UP, DEEP, BASIC, CHANGE_TOPIC, FINISH
+    next_action: Literal["FOLLOW_UP", "DEEP", "BASIC", "CHANGE_TOPIC", "FINISH", "NEXT", "SIMPLIFY"]
 
 class ReportGenSchema(BaseModel):
-    total_score: float
+    total_score: Score
     performance_level: str
-    dimension_scores: Dict[str, float] # 专业基础, 项目经验, 系统设计, 沟通表达, 综合素质
+    dimension_scores: Dict[str, Score]
     strengths: List[str]
     weaknesses: List[str]
     suggestions: List[str]

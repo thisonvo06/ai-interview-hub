@@ -30,7 +30,8 @@ def seed(reset=True):
     print("=================================================================")
     print("经纬职引-智面仓 AI Interview Hub V2 - 高保真业务仿真数据初始化")
     print("=================================================================")
-    Base.metadata.create_all(bind=engine)
+    from app.core.database import ensure_schema
+    ensure_schema()
     db = SessionLocal()
 
     if reset:
@@ -55,6 +56,7 @@ def seed(reset=True):
             db.close()
             return
 
+    from app.data.official_recruitment import OFFICIAL_RECRUITMENT
     print("1. Seeding RBAC Roles...")
     roles = [
         Role(code="PERSONAL_USER", name="个人求职者", description="学生或社会求职者"),
@@ -307,6 +309,7 @@ def seed(reset=True):
         comp = companies[idx % len(companies)]
         j = Job(
             company_id=comp.id,
+            official_apply_url=OFFICIAL_RECRUITMENT.get(comp.name),
             title=jt[0],
             category=jt[1],
             city=jt[2],

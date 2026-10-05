@@ -13,6 +13,8 @@ from app.models.resume import (
     ResumeSkill, ResumeAIAnalysis
 )
 from app.models.application import Application
+from app.models.system import FileRecord
+from app.services.ai_provenance import ai_context
 from app.schemas.common import ResponseModel
 from app.schemas.resume import (
     ResumeCreate, ResumeUpdate, ResumeOut, EducationItem, ProjectItem,
@@ -23,6 +25,10 @@ from app.ai.provider import ai_provider
 
 router = APIRouter(tags=["简历中心"])
 
+def validate_owned_file(db, user_id, file_url):
+    if file_url and not db.query(FileRecord).filter_by(file_url=file_url, owner_id=user_id).first():
+        raise HTTPException(403, "只能关联本人上传的文件")
+
 def extract_file_text(file_url: str) -> str:
     """从已上传的简历文件中抽取纯文本，供 AI 解析/诊断使用。
 
@@ -31,8 +37,12 @@ def extract_file_text(file_url: str) -> str:
     """
     if not file_url:
         return ""
-    rel = file_url.replace("/uploads/", "", 1).lstrip("/")
-    path = os.path.join(settings.UPLOAD_DIR, rel)
+    if not file_url.startswith("/uploads/"):
+        return ""
+    rel = file_url[len("/uploads/"):]
+    path = os.path.realpath(os.path.join(settings.UPLOAD_DIR, rel))
+    if os.path.commonpath([os.path.realpath(settings.UPLOAD_DIR), path]) != os.path.realpath(settings.UPLOAD_DIR):
+        return ""
     if not os.path.exists(path):
         return ""
 
@@ -151,6 +161,7 @@ def list_my_resumes(current_user: User = Depends(require_auth), db: Session = De
 
 @router.post("/resumes", response_model=ResponseModel[ResumeOut])
 def create_resume(req: ResumeCreate, current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
+    validate_owned_file(db, current_user.id, req.file_url)
     # If set default, clear existing default
     if req.is_default:
         db.query(Resume).filter(Resume.user_id == current_user.id).update({"is_default": False})
@@ -197,8 +208,7 @@ def get_resume(id: int, current_user: User = Depends(require_auth), db: Session 
     if resume.user_id != current_user.id:
         user_roles = [r.role_code for r in current_user.roles]
         is_admin = "PLATFORM_ADMIN" in user_roles or "SUPER_ADMIN" in user_roles
-        is_recruiter = any(r in ["ENTERPRISE_OWNER", "ENTERPRISE_ADMIN", "RECRUITER", "INTERVIEWER", "HIRING_MANAGER"] for r in user_roles)
-        if not (is_admin or is_recruiter):
+        if not is_admin:
             raise HTTPException(status_code=403, detail="无权访问该简历内容")
 
     return ResponseModel(data=build_resume_out(resume))
@@ -212,6 +222,7 @@ def update_resume(id: int, req: ResumeUpdate, current_user: User = Depends(requi
     resume.name = req.name
     resume.target_job_title = req.target_job_title
     if req.file_url:
+        validate_owned_file(db, current_user.id, req.file_url)
         resume.file_url = req.file_url
     if req.file_name:
         resume.file_name = req.file_name
@@ -274,15 +285,20 @@ async def parse_resume_ai(id: int, current_user: User = Depends(require_auth), d
 
     # 读取真实简历文本（优先文件抽取，回退结构化字段）
     resume_text = resolve_resume_text(resume)
-    parsed = await ai_provider.parse_resume(resume_text)
+    validate_owned_file(db, current_user.id, resume.file_url)
+    with ai_context(current_user.id, resume.id):
+        parsed = await ai_provider.parse_resume(resume_text)
+    meta = parsed.get("_ai_meta", {})
+    if meta.get("source") != "REAL":
+        raise HTTPException(503, "真实简历解析暂不可用，上传文件已保存，请稍后重试或手动填写；模拟内容不会写入个人简历")
 
     # Record analysis
     analysis = ResumeAIAnalysis(
         resume_id=resume.id,
         analysis_type="STRUCTURAL_PARSE",
         result_json=json.dumps(parsed, ensure_ascii=False),
-        prompt_version="v1.0",
-        model="real-llm" if ai_provider.is_real else "mock-ai"
+        prompt_version=parsed.get("_ai_meta", {}).get("prompt_version", "unknown"),
+        model=parsed.get("_ai_meta", {}).get("model", "unknown")
     )
     db.add(analysis)
 
@@ -327,16 +343,19 @@ async def optimize_resume_ai(id: int, current_user: User = Depends(require_auth)
     if not resume:
         raise HTTPException(status_code=404, detail="简历不存在")
 
-    # 接入真实 AI 模型进行简历深度诊断（不可达时自动回退 mock）
-    res = await ai_provider.optimize_resume(resolve_resume_text(resume), resume.target_job_title)
+    validate_owned_file(db, current_user.id, resume.file_url)
+    with ai_context(current_user.id, resume.id):
+        res = await ai_provider.optimize_resume(resolve_resume_text(resume), resume.target_job_title)
+    provenance = res.pop("_ai_meta", {"source": "UNKNOWN", "model": "unknown"})
+    res["provenance"] = provenance
 
     # 记录本次诊断
     analysis = ResumeAIAnalysis(
         resume_id=resume.id,
         analysis_type="COMPREHENSIVE",
         result_json=json.dumps(res, ensure_ascii=False),
-        prompt_version="v2.0",
-        model="real-llm" if ai_provider.is_real else "mock-ai"
+        prompt_version=provenance.get("prompt_version", "unknown"),
+        model=provenance.get("model", "unknown")
     )
     db.add(analysis)
     db.commit()
@@ -353,7 +372,9 @@ async def apply_resume_optimization(id: int, current_user: User = Depends(requir
     if not resume:
         raise HTTPException(status_code=404, detail="简历不存在")
 
-    rewrite = await ai_provider.rewrite_resume(resolve_resume_text(resume), resume.target_job_title)
+    validate_owned_file(db, current_user.id, resume.file_url)
+    with ai_context(current_user.id, resume.id):
+        rewrite = await ai_provider.rewrite_resume(resolve_resume_text(resume), resume.target_job_title)
     changes = rewrite.get("changes") or []
 
     # 按名称匹配回写改写后的项目描述
@@ -392,5 +413,6 @@ async def apply_resume_optimization(id: int, current_user: User = Depends(requir
 
     return ResponseModel(data=ResumeOptimizeApplyResult(
         resume=build_resume_out(resume),
-        changes=changes
+        changes=changes,
+        provenance=rewrite.get("_ai_meta", {"source": "UNKNOWN"})
     ))

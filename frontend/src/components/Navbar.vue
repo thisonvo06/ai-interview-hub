@@ -7,14 +7,15 @@
           <el-icon :size="22" color="#FFFFFF"><Monitor /></el-icon>
         </div>
         <div class="logo-text">
-          <span class="logo-main">经纬职引-智面仓</span>
-          <span class="logo-sub">AI Interview Hub</span>
+          <span class="logo-main">智面仓<span class="brand-divider"> / </span>职引</span>
+          <span class="logo-sub">THE CAREER JOURNAL</span>
         </div>
       </router-link>
 
       <!-- Nav Links -->
-      <nav class="zh-nav-links">
-        <router-link to="/" class="nav-item" active-class="active" exact>首页</router-link>
+      <button class="mobile-nav-toggle" @click="mobileNavOpen = !mobileNavOpen" :aria-expanded="mobileNavOpen" aria-controls="primary-nav">{{ mobileNavOpen ? "收起" : "导航" }}</button>
+      <nav id="primary-nav" :class="['zh-nav-links', { 'mobile-open': mobileNavOpen }]" aria-label="主要导航" @click="mobileNavOpen = false">
+        <router-link to="/" class="nav-item" exact-active-class="active">首页</router-link>
         <router-link to="/jobs" class="nav-item" active-class="active">岗位广场</router-link>
         <router-link to="/features" class="nav-item" active-class="active">功能介绍</router-link>
         <router-link to="/about" class="nav-item" active-class="active">关于我们</router-link>
@@ -125,10 +126,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { personalApi } from '@/api'
+import { personalApi, authApi } from '@/api'
 import {
   Monitor, Search, Bell, ArrowDown, Odometer, Suitcase, Document,
   Files, VideoCamera, TrendCharts, User, OfficeBuilding, Briefcase,
@@ -137,6 +138,7 @@ import {
 
 const router = useRouter()
 const authStore = useAuthStore()
+const mobileNavOpen = ref(false)
 const searchKey = ref('')
 const hasUnread = ref(false)
 
@@ -153,12 +155,15 @@ const loadUnreadStatus = async () => {
 
 // 连接通知 WebSocket，收到新通知时实时刷新红点
 let notiWs: WebSocket | null = null
-const connectNotificationWS = () => {
+let disposed = false
+const connectNotificationWS = async () => {
   const userId = authStore.user?.id
   if (!authStore.isPersonal || !userId || notiWs) return
   try {
+    const data: any = await authApi.getRealtimeTicket('notifications', userId)
+    if (disposed || authStore.user?.id !== userId || !authStore.isPersonal) return
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    notiWs = new WebSocket(`${proto}://${location.host}/ws/notifications/${userId}`)
+    notiWs = new WebSocket(`${proto}://${location.host}/ws/notifications/${userId}?ticket=${encodeURIComponent(data.ticket)}`)
     notiWs.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data)
@@ -177,7 +182,10 @@ onMounted(() => {
   connectNotificationWS()
 })
 
+watch(() => authStore.user?.id, () => { notiWs?.close(); notiWs = null; loadUnreadStatus(); connectNotificationWS() })
+
 onUnmounted(() => {
+  disposed = true
   notiWs?.close()
   notiWs = null
 })
@@ -220,8 +228,8 @@ const handleCommand = (cmd: string) => {
   position: sticky;
   top: 0;
   z-index: 100;
-  height: 64px;
-  background: rgba(255, 255, 255, 0.95);
+  height: 76px;
+  background: rgba(248, 248, 243, 0.96);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--zh-border);
 }
@@ -246,11 +254,11 @@ const handleCommand = (cmd: string) => {
   width: 36px;
   height: 36px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  background: #246657;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+  box-shadow: none;
 }
 
 .logo-text {
@@ -312,7 +320,7 @@ const handleCommand = (cmd: string) => {
 }
 
 .nav-search {
-  width: 240px;
+  width: 190px;
 }
 
 .auth-buttons {
@@ -370,4 +378,13 @@ const handleCommand = (cmd: string) => {
 .role-tag {
   border-radius: 4px;
 }
+.brand-divider { font-weight:400; color:#a8b6aa; margin:0 3px; }
+.mobile-nav-toggle { display:none; background:none; border:0; color:var(--zh-primary); cursor:pointer; font:inherit; padding:8px; }
+.zh-nav-links { gap:24px; margin-left:20px; }
+.logo-main { font-family:var(--zh-font-editorial); font-size:21px; font-weight:600; letter-spacing:.04em; }
+.logo-sub { font-size:8px; letter-spacing:.14em; }
+.nav-item { font-size:13px; }.nav-item.active::after { bottom:-22px; }
+@media(max-width:1200px) { .nav-search { display:none; }.zh-nav-links { margin-left:0; gap:20px; } }
+@media(max-width:860px) { .zh-nav-links { gap:14px; }.zh-nav-links .nav-item:nth-last-child(-n+2) { display:none; }.role-tag { display:none; }.zh-nav-container { padding:0 20px; }.logo-icon { width:30px; height:30px; }.zh-logo { gap:8px; } }
+@media(max-width:620px) { .zh-navbar { height:68px; }.mobile-nav-toggle { display:block; margin-left:auto; margin-right:10px; }.zh-nav-links { display:none; }.zh-nav-links.mobile-open { display:flex; position:absolute; top:68px; left:0; right:0; padding:18px 20px; gap:22px; background:var(--zh-bg); border-bottom:1px solid var(--zh-border); flex-wrap:wrap; }.zh-nav-links.mobile-open .nav-item { display:block; }.nav-item.active::after { bottom:0; }.user-avatar-trigger .user-name,.user-avatar-trigger>.el-icon { display:none; }.user-session { gap:12px; }.logo-main { font-size:18px; }.auth-buttons { gap:2px; }.auth-buttons .el-button { padding:8px 10px; }.zh-nav-actions { gap:4px; } }
 </style>

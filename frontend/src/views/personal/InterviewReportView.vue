@@ -1,7 +1,15 @@
 <template>
   <div class="interview-report-page">
+    <div v-if="error" class="zh-card" style="padding: 24px; margin-bottom: 16px">
+      <p>报告尚未生成或读取失败。已保存的答案会保留，可以重试结算。</p>
+      <el-button type="primary" :loading="loading" @click="retryGeneration">重试生成报告</el-button>
+    </div>
     <StateContainer :loading="loading" :error="error" @retry="loadReport">
       <div v-if="report" class="report-wrapper">
+        <el-alert v-if="report.provenance?.answer_sources?.some((s: string) => s !== 'REAL' && s !== 'RULE')"
+          title="包含模拟或历史未知来源评分，供训练参考；模拟评分不会更新正式能力画像。" type="warning" :closable="false" show-icon />
+        <el-alert v-if="report.provenance?.source === 'MOCK_FALLBACK'" title="报告文字使用了模拟回退，分数仍由已保存的逐题评分汇总。" type="warning" :closable="false" />
+        <el-button v-if="report.learning_state === 'FAILED'" @click="retryGeneration">重试生成学习路线</el-button>
         <!-- Top Navigation & Action Header -->
         <div class="report-top-nav">
           <router-link to="/personal/interviews" class="back-link">
@@ -91,7 +99,7 @@
               </div>
               <div class="meta-row">
                 <span class="lbl">答题体量</span>
-                <span class="val">{{ report.questions_analysis?.length || 5 }} 题 (已全量完成)</span>
+                <span class="val">{{ report.questions_analysis?.length || 0 }} 题（已评分）</span>
               </div>
               <div class="meta-row">
                 <span class="lbl">报告生成时间</span>
@@ -150,9 +158,10 @@
                 <!-- Competency Benchmark Table -->
                 <div class="benchmark-section zh-card">
                   <div class="section-head">
-                    <h3 class="sec-title">核心技能胜任力达标对照表</h3>
-                    <span class="sec-sub">对照一线大厂初/中级工程师岗位基准线 (Benchmark: 60分)</span>
+                    <h3 class="sec-title">本次作答的技能表现</h3>
+                    <span class="sec-sub">依据有效逐题评分与难度权重汇总；未测量技能不展示</span>
                   </div>
+                  <el-empty v-if="!competencyBenchmarks.length" description="暂无来自有效评分的技能样本" :image-size="60" />
                   <div class="benchmark-grid">
                     <div
                       v-for="(item, key) in competencyBenchmarks"
@@ -165,7 +174,7 @@
                           :type="item.score >= 80 ? 'success' : item.score >= 70 ? 'warning' : 'danger'"
                           size="small"
                         >
-                          {{ item.score >= 80 ? '达标/优势' : item.score >= 70 ? '基本达标' : '待强化' }}
+                          {{ item.score >= 80 ? '表现较强' : item.score >= 70 ? '继续巩固' : '待强化' }}
                         </el-tag>
                       </div>
                       <div class="bm-score-bar">
@@ -174,11 +183,11 @@
                             class="bm-progress-fill"
                             :style="{ width: item.score + '%', backgroundColor: item.score >= 75 ? '#10B981' : item.score >= 60 ? '#F59E0B' : '#EF4444' }"
                           ></div>
-                          <div class="bm-benchmark-line" style="left: 60%" title="大厂基准线 60分"></div>
+
                         </div>
                         <div class="bm-num-row">
                           <span class="actual-score">当前：{{ item.score }}分</span>
-                          <span class="target-score">基准：60分</span>
+                          <span class="target-score">本次样本</span>
                         </div>
                       </div>
                     </div>
@@ -531,58 +540,20 @@ const qtypeLabel = (t?: string) =>
 const qtypeClass = (t?: string) =>
   ({ PROFESSIONAL: 'qtype-pro', GENERAL: 'qtype-gen', STRESS: 'qtype-str' }[t || ''] || 'qtype-gen')
 
-const radarIndicators = [
-  { name: '专业基础', max: 100 },
-  { name: '项目经验', max: 100 },
-  { name: '系统设计', max: 100 },
-  { name: '算法思维', max: 100 },
-  { name: '架构设计', max: 100 },
-  { name: '沟通表达', max: 100 }
-]
-
-const radarValues = computed(() => {
-  if (!report.value?.dimension_scores) return [85, 88, 72, 78, 74, 80]
-  const d = report.value.dimension_scores
-  return [
-    d['专业基础'] || 85,
-    d['项目经验'] || 88,
-    d['系统设计'] || 72,
-    d['算法思维'] || d['算法与数据结构'] || 78,
-    d['架构思维'] || d['架构设计'] || 74,
-    d['沟通表达'] || 80
-  ]
-})
-
-const displayDimensionScores = computed(() => {
-  if (report.value?.dimension_scores && Object.keys(report.value.dimension_scores).length > 0) {
-    return report.value.dimension_scores
-  }
-  return {
-    '专业基础': 85,
-    '项目经验': 88,
-    '系统设计': 72,
-    '算法思维': 78,
-    '架构设计': 74,
-    '沟通表达': 80
-  }
-})
-
+const displayDimensionScores = computed(() => report.value?.dimension_scores || {})
+const radarIndicators = computed(() => Object.keys(displayDimensionScores.value).map(name => ({ name, max: 100 })))
+const radarValues = computed(() => Object.values(displayDimensionScores.value).map(value => Number(value)))
 const competencyBenchmarks = computed(() => {
-  const base = report.value?.total_score ?? 40
-  // 围绕实际总分上下波动 ±6 分，保证各技能有差异但不脱离真实水平
-  const jitter = [-4, +2, -6, -1, -8, -10]
-  const names = [
-    'Java 基础与多线程',
-    'Redis 缓存架构',
-    'MySQL 事务与索引优化',
-    'Spring Boot 框架源码',
-    '微服务与分布式事务',
-    '高并发系统限流容灾'
-  ]
-  return names.map((name, i) => ({
-    name,
-    score: Math.max(5, Math.min(98, Math.round(base + jitter[i])))
-  }))
+  const groups = new Map<string, { sum: number; weight: number }>()
+  for (const q of report.value?.questions_analysis || []) {
+    if (!q.skill_name || q.is_empty || q.is_skipped || !['REAL', 'RULE'].includes(q.provenance?.source || 'UNKNOWN')) continue
+    const weight = ({ EASY: 1, MEDIUM: 1.2, HARD: 1.5 } as Record<string, number>)[q.difficulty || 'MEDIUM'] || 1.2
+    const group = groups.get(q.skill_name) || { sum: 0, weight: 0 }
+    group.sum += Number(q.score) * weight
+    group.weight += weight
+    groups.set(q.skill_name, group)
+  }
+  return Array.from(groups, ([name, group]) => ({ name, score: Math.round(group.sum / group.weight) }))
 })
 
 const getDimensionDescription = (name: string, score: number) => {
@@ -604,6 +575,12 @@ const formatDate = (val?: string) => {
 const handleExport = () => {
   ElMessage.success('能力诊断报告生成完毕，已开启浏览器打印/另存为PDF')
   window.print()
+}
+
+const retryGeneration = async () => {
+  loading.value = true
+  try { await interviewApi.finishInterview(Number(route.params.id)); await loadReport() }
+  finally { loading.value = false }
 }
 
 const loadReport = async () => {

@@ -4,11 +4,12 @@
     <div class="workspace-body">
       <!-- Left Sidebar (230px per spec) -->
       <aside class="workspace-sidebar">
+        <div class="sidebar-section-label">MY GROWTH SPACE</div>
         <div class="sidebar-user-card">
           <el-avatar :size="48" class="user-avatar">{{ userInitial }}</el-avatar>
           <div class="user-info">
             <h4 class="user-name">{{ authStore.user?.name || '同学' }}</h4>
-            <span class="user-target">{{ authStore.user?.target_job_title || 'Java后端开发' }}</span>
+            <span class="user-target">{{ authStore.user?.target_job_title || '开启你的成长记录' }}</span>
           </div>
         </div>
 
@@ -28,6 +29,10 @@
           <el-menu-item index="/personal/applications">
             <el-icon><Document /></el-icon>
             <span>我的求职</span>
+          </el-menu-item>
+          <el-menu-item index="/personal/job-search">
+            <el-icon><Reading /></el-icon>
+            <span>求职计划</span>
           </el-menu-item>
           <el-menu-item index="/personal/resumes">
             <el-icon><Files /></el-icon>

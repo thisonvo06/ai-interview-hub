@@ -21,6 +21,11 @@ class Interview(Base):
     derived_from_id = Column(Integer, nullable=True)  # 重练来源面试 ID（可空）
     status = Column(String(50), default="CREATED", nullable=False)         # CREATED, READY, IN_PROGRESS, PAUSED, COMPLETED, CANCELLED, EXPIRED
     current_question_seq = Column(Integer, default=1, nullable=False)
+    version = Column(Integer, default=0, nullable=False)
+    processing_token = Column(String(64), nullable=True)
+    processing_started_at = Column(DateTime, nullable=True)
+    report_state = Column(String(30), default="PENDING", nullable=False)
+    learning_state = Column(String(30), default="PENDING", nullable=False)
     # 当前题呈现时间：服务端据此计算单题真实用时与超时判定（不信任客户端上报）
     current_question_shown_at = Column(DateTime, nullable=True)
     paused_at = Column(DateTime, nullable=True)  # 暂停时刻：恢复时把暂停时长从呈现时间中剔除
@@ -85,6 +90,10 @@ class InterviewAnswer(Base):
     interview_id = Column(Integer, ForeignKey("interviews.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     text = Column(Text, nullable=False)
+    request_id = Column(String(64), nullable=True)
+    payload_hash = Column(String(64), nullable=True)
+    processing_state = Column(String(30), default="PENDING", nullable=False)
+    result_json = Column(Text, nullable=True)
     audio_file_id = Column(String(100), nullable=True)  # 预留：语音链路未接入，恒为 NULL
     duration_sec = Column(Integer, default=45, nullable=False)
     # 单题超时标记与超时秒数：服务端按 current_question_shown_at 判定，轻扣分不归零
@@ -105,6 +114,7 @@ class AnswerEvaluation(Base):
     answer_id = Column(Integer, ForeignKey("interview_answers.id"), unique=True, nullable=False)
     interview_id = Column(Integer, nullable=False)
     total_score = Column(Float, nullable=False)
+    provenance_json = Column(Text, nullable=True)
     # Rubric: 准确度(30%), 相关性(20%), 完整性(15%), 逻辑结构(15%), 实践深度(15%), 表达能力(5%)
     dimensions_json = Column(Text, nullable=False)
     evidence_json = Column(Text, nullable=False)
@@ -130,6 +140,7 @@ class InterviewReport(Base):
     weaknesses_json = Column(Text, nullable=False)
     suggestions_json = Column(Text, nullable=False)
     summary = Column(Text, nullable=False)
+    provenance_json = Column(Text, nullable=True)
     status = Column(String(50), default="COMPLETED", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

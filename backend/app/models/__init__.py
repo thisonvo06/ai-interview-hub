@@ -33,3 +33,5 @@ __all__ = [
     "LearningPlan", "LearningTask",
     "Notification", "FileRecord", "ConsentRecord", "Complaint", "OperationLog", "AICallLog", "SystemSetting"
 ]
+from app.models.external_application import ExternalApplication
+from app.models.job_search import JobSearchOpportunity

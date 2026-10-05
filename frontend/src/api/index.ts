@@ -1,7 +1,8 @@
 import client from './client'
-import type { UserInfo, JobItem, ResumeItem, ApplicationItem, InterviewSession, InterviewReportData, PaperPreview, HistoryComparison, WeakQuestionsResult, QuestionBankListResult } from '@/types'
+import type { UserInfo, ExternalApplicationItem, JobItem, ResumeItem, ApplicationItem, InterviewSession, InterviewReportData, PaperPreview, HistoryComparison, WeakQuestionsResult, QuestionBankListResult } from '@/types'
 
 export const authApi = {
+  getRealtimeTicket: (channel: string, resource_id: number) => client.post("/realtime/ticket", { channel, resource_id }),
   login: (data: any) => client.post('/auth/login', data),
   logout: () => client.post('/auth/logout'),
   getMe: () => client.get<any, UserInfo>('/auth/me'),
@@ -29,7 +30,7 @@ export const jobApi = {
   getJobDetail: (id: number) => client.get<any, JobItem>(`/jobs/${id}`),
   favoriteJob: (id: number) => client.post(`/jobs/${id}/favorite`),
   unfavoriteJob: (id: number) => client.delete(`/jobs/${id}/favorite`),
-  applyJob: (id: number, data: { resume_id: number }) => client.post(`/jobs/${id}/apply`, data),
+  recordOfficialVisit: (id: number) => client.post(`/jobs/${id}/official-visit`),
 }
 
 export const resumeApi = {
@@ -45,6 +46,8 @@ export const resumeApi = {
 }
 
 export const applicationApi = {
+  listExternal: () => client.get<any, ExternalApplicationItem[]>('/external-applications'),
+  updateExternal: (id: number, data: { status: string; note: string }) => client.patch(`/external-applications/${id}`, data),
   listApplications: (params?: any) => client.get<any, ApplicationItem[]>('/applications', { params }),
   getApplication: (id: number) => client.get<any, ApplicationItem>(`/applications/${id}`),
   withdrawApplication: (id: number, data: { reason: string }) => client.post(`/applications/${id}/withdraw`, data),
@@ -83,8 +86,19 @@ export const interviewApi = {
   startInterview: (id: number) => client.post(`/interviews/${id}/start`),
   pauseInterview: (id: number) => client.post(`/interviews/${id}/pause`),
   resumeInterview: (id: number) => client.post(`/interviews/${id}/resume`),
-  answerQuestion: (id: number, data: any) => client.post(`/interviews/${id}/answer`, data),
-  finishInterview: (id: number) => client.post(`/interviews/${id}/finish`),
+  answerQuestion: async (id: number, data: any) => {
+    const key = `zh_answer_request_${id}_${data.question_id}`
+    const saved = sessionStorage.getItem(key)
+    const pending = saved ? JSON.parse(saved) : { ...data, request_id: crypto.randomUUID() }
+    if (pending.text !== data.text || !!pending.skipped !== !!data.skipped) {
+      throw new Error('上次提交的答案已保存，请先恢复原答案并重试；成功后再回答下一题')
+    }
+    sessionStorage.setItem(key, JSON.stringify(pending))
+    const result = await client.post(`/interviews/${id}/answer`, pending, { timeout: 120000 })
+    sessionStorage.removeItem(key)
+    return result
+  },
+  finishInterview: (id: number) => client.post(`/interviews/${id}/finish`, null, { timeout: 120000 }),
   getReport: (id: number) => client.get<any, InterviewReportData>(`/interviews/${id}/report`),
   // 结构化题库组卷：配比查询 / 组卷预览 / 题库统计
   getPaperRatio: (params: { mode: string; total_questions: number }) =>
@@ -161,4 +175,12 @@ export const adminApi = {
   createQuestion: (data: any) => client.post('/admin/question-bank', data),
   updateQuestion: (id: number, data: any) => client.put(`/admin/question-bank/${id}`, data),
   toggleQuestion: (id: number, enabled: boolean) => client.patch(`/admin/question-bank/${id}/toggle`, { enabled }),
+}
+
+export const privateFileApi = {
+  async preview(fileUrl: string): Promise<string> {
+    if (!/^\/uploads\/[a-zA-Z0-9_.-]+$/.test(fileUrl)) throw new Error('文件地址无效')
+    const blob = await client.get<any, Blob>(fileUrl, { baseURL: '', responseType: 'blob' })
+    return URL.createObjectURL(blob)
+  },
 }
