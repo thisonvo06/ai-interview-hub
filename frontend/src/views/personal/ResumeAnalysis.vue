@@ -113,12 +113,13 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { resumeApi } from '@/api'
 import StateContainer from '@/components/StateContainer.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const route = useRoute()
+const router = useRouter()
 const loading = ref(true)
 const error = ref(false)
 const applying = ref(false)
@@ -161,8 +162,8 @@ const loadAnalysis = async () => {
 
 const handleApply = async () => {
   applying.value = true
+  const id = Number(route.params.id)
   try {
-    const id = Number(route.params.id)
     const res: any = await resumeApi.applyOptimization(id)
     const changes: string[] = res?.changes || []
     if (!changes.length) {
@@ -172,9 +173,13 @@ const handleApply = async () => {
     ElMessageBox.alert(
       `<div style="line-height:1.8;font-size:13px;">${changes.map(c => `· ${c}`).join('<br/>')}</div>`,
       'AI 优化已应用',
-      { dangerouslyUseHTMLString: true, confirmButtonText: '知道了' }
-    )
-    await loadAnalysis()
+      { dangerouslyUseHTMLString: true, confirmButtonText: '查看优化后的简历' }
+    ).then(() => {
+      router.push(`/personal/resumes/${id}/edit`)
+    }).catch(() => {
+      // 关闭弹窗也跳转到编辑页，避免停留在旧诊断结果上
+      router.push(`/personal/resumes/${id}/edit`)
+    })
   } catch (e) {
     ElMessage.error('优化应用失败，请稍后重试')
   } finally {
