@@ -1,5 +1,5 @@
 import client from './client'
-import type { UserInfo, ExternalApplicationItem, JobItem, ResumeItem, ApplicationItem, InterviewSession, InterviewReportData, PaperPreview, HistoryComparison, WeakQuestionsResult, QuestionBankListResult } from '@/types'
+import type { UserInfo, ExternalApplicationItem, JobItem, ResumeItem, ResumeDocumentItem, ApplicationItem, InterviewSession, InterviewReportData, PaperPreview, HistoryComparison, WeakQuestionsResult, QuestionBankListResult } from '@/types'
 
 export const authApi = {
   getRealtimeTicket: (channel: string, resource_id: number) => client.post("/realtime/ticket", { channel, resource_id }),
@@ -39,10 +39,16 @@ export const resumeApi = {
   createResume: (data: any) => client.post<any, ResumeItem>('/resumes', data),
   updateResume: (id: number, data: any) => client.put<any, ResumeItem>(`/resumes/${id}`, data),
   deleteResume: (id: number) => client.delete(`/resumes/${id}`),
-  parseResume: (id: number) => client.post(`/resumes/${id}/parse`),
   optimizeResume: (id: number) => client.post(`/resumes/${id}/optimize`),
   applyOptimization: (id: number) => client.post(`/resumes/${id}/optimize/apply`),
   uploadFile: (formData: FormData) => client.post('/files/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } }),
+}
+
+export const resumeDocumentApi = {
+  list: () => client.get<any, ResumeDocumentItem[]>('/resume-documents'),
+  create: (data: { file_url: string; file_name: string }) => client.post<any, ResumeDocumentItem>('/resume-documents', data),
+  remove: (id: number) => client.delete(`/resume-documents/${id}`),
+  parse: (id: number) => client.post<any, ResumeItem>(`/resume-documents/${id}/parse`, null, { timeout: 150000 }),
 }
 
 export const applicationApi = {
@@ -104,6 +110,7 @@ export const interviewApi = {
     return result
   },
   finishInterview: (id: number) => client.post(`/interviews/${id}/finish`, null, { timeout: 120000 }),
+  abortInterview: (id: number) => client.post(`/interviews/${id}/abort`),
   getReport: (id: number) => client.get<any, InterviewReportData>(`/interviews/${id}/report`),
   // 结构化题库组卷：配比查询 / 组卷预览 / 题库统计
   getPaperRatio: (params: { mode: string; total_questions: number }) =>

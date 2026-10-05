@@ -60,6 +60,14 @@ export interface ResumeItem {
   skills: { skill_name: string; level: string; evidence?: string }[]
 }
 
+export interface ResumeDocumentItem {
+  id: number
+  file_url: string
+  file_name: string
+  created_at: string
+  updated_at: string
+}
+
 export interface ApplicationItem {
   id: number
   user_id: number

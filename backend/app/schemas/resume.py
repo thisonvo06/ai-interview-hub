@@ -1,5 +1,5 @@
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime
 
 class EducationItem(BaseModel):
@@ -31,7 +31,7 @@ class SkillItem(BaseModel):
 
 class ResumeCreate(BaseModel):
     name: str = "我的个人简历"
-    target_job_title: str = "Java后端开发工程师"
+    target_job_title: str = ""
     is_default: bool = False
     file_url: Optional[str] = None
     file_name: Optional[str] = None
@@ -80,3 +80,18 @@ class ResumeOptimizeApplyResult(BaseModel):
     provenance: dict = Field(default_factory=dict)
     resume: ResumeOut
     changes: List[str] = []
+
+
+class ResumeDocumentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    file_url: str
+    file_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ResumeDocumentCreate(BaseModel):
+    file_url: str
+    file_name: str

@@ -1,5 +1,6 @@
 import time
 import json
+import re
 import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -92,6 +93,11 @@ class AIProvider:
             ],
             "response_format": {"type": "json_object"}
         }
+        # qwen3 系列默认开启思考模式，会先生成数千推理 token 导致结构化调用超时；
+        # 这些确定性 JSON 抽取/生成任务关闭思考可将耗时从 ~90s 降到 ~10s。
+        # 该参数为 DashScope 专有，仅对 qwen 模型下发，避免其他供应商报 400。
+        if "qwen" in str(cfg["model"]).lower():
+            payload["enable_thinking"] = False
 
         started = time.time()
         status = "SUCCESS"
@@ -99,7 +105,9 @@ class AIProvider:
         tokens_in = 0
         tokens_out = 0
         try:
-            async with httpx.AsyncClient(timeout=25.0) as client:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
+            ) as client:
                 res = await client.post(f"{cfg['base_url'].rstrip('/')}/chat/completions", headers=headers, json=payload)
                 latency_ms = int((time.time() - started) * 1000)
                 if res.status_code == 200:
@@ -132,7 +140,21 @@ class AIProvider:
     @traced
     async def parse_resume(self, resume_text: str) -> Dict[str, Any]:
         """Parses resume text into structured entities."""
-        prompt = f"Parse this resume into JSON:\n{resume_text}"
+        # 控制输入规模：PDF 抽取文本常含页眉页脚等噪声，截断可显著降低 LLM 生成耗时
+        cleaned = re.sub(r"\n{3,}", "\n\n", resume_text or "").strip()
+        cleaned = cleaned[:4000]
+        prompt = (
+            "Extract the resume into JSON. Output ONLY the JSON object, no markdown, no explanation. "
+            "Keep every text field SHORT (phrases, not sentences). Use empty string if unknown.\n"
+            'Schema: {"education":[{"school","major","degree","start_date","end_date"}], '
+            '"work_experience":[{"company","title","description","start_date","end_date"}], '
+            '"projects":[{"name","role","description","technologies","start_date","end_date"}], '
+            '"skills":[{"skill_name","level","evidence"}], '
+            '"certificates":[str], "warnings":[str]}\n'
+            "description fields: max 40 chars each. skills evidence: max 30 chars. "
+            "Do not invent facts; only extract what appears in the text.\n\n"
+            f"=== Resume ===\n{cleaned}"
+        )
         real_res = await self._call_llm_json(prompt, ResumeParseSchema, "RESUME_PARSE")
         if real_res:
             return real_res

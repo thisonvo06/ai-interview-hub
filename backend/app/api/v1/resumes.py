@@ -10,7 +10,7 @@ from app.core.deps import require_auth, log_operation
 from app.models.user import User
 from app.models.resume import (
     Resume, ResumeEducation, ResumeProject, ResumeWorkExperience,
-    ResumeSkill, ResumeAIAnalysis
+    ResumeSkill, ResumeAIAnalysis, ResumeDocument
 )
 from app.models.application import Application
 from app.models.system import FileRecord
@@ -18,8 +18,8 @@ from app.services.ai_provenance import ai_context
 from app.schemas.common import ResponseModel
 from app.schemas.resume import (
     ResumeCreate, ResumeUpdate, ResumeOut, EducationItem, ProjectItem,
-    WorkExperienceItem, SkillItem, ResumeAIParseResult, ResumeAIOptimizeResult,
-    ResumeOptimizeApplyResult
+    WorkExperienceItem, SkillItem, ResumeAIOptimizeResult,
+    ResumeOptimizeApplyResult, ResumeDocumentOut, ResumeDocumentCreate
 )
 from app.ai.provider import ai_provider
 
@@ -277,66 +277,6 @@ def delete_resume(id: int, current_user: User = Depends(require_auth), db: Sessi
         db.commit()
         return ResponseModel(data={"message": "简历删除成功"})
 
-@router.post("/resumes/{id}/parse", response_model=ResponseModel[ResumeAIParseResult])
-async def parse_resume_ai(id: int, current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
-    resume = db.query(Resume).filter(Resume.id == id, Resume.user_id == current_user.id).first()
-    if not resume:
-        raise HTTPException(status_code=404, detail="简历不存在")
-
-    # 读取真实简历文本（优先文件抽取，回退结构化字段）
-    resume_text = resolve_resume_text(resume)
-    validate_owned_file(db, current_user.id, resume.file_url)
-    with ai_context(current_user.id, resume.id):
-        parsed = await ai_provider.parse_resume(resume_text)
-    meta = parsed.get("_ai_meta", {})
-    if meta.get("source") != "REAL":
-        raise HTTPException(503, "真实简历解析暂不可用，上传文件已保存，请稍后重试或手动填写；模拟内容不会写入个人简历")
-
-    # Record analysis
-    analysis = ResumeAIAnalysis(
-        resume_id=resume.id,
-        analysis_type="STRUCTURAL_PARSE",
-        result_json=json.dumps(parsed, ensure_ascii=False),
-        prompt_version=parsed.get("_ai_meta", {}).get("prompt_version", "unknown"),
-        model=parsed.get("_ai_meta", {}).get("model", "unknown")
-    )
-    db.add(analysis)
-
-    # 将解析结果回写到结构化字段（若原有内容为空则填充）
-    for e in parsed.get("education", []):
-        db.add(ResumeEducation(resume_id=resume.id, **e))
-    for p in parsed.get("projects", []):
-        db.add(ResumeProject(
-            resume_id=resume.id,
-            name=p.get("name", "项目经历"),
-            role=p.get("role", "核心开发"),
-            description=p.get("description", ""),
-            technologies=p.get("technologies", ""),
-            start_date=p.get("start_date", ""),
-            end_date=p.get("end_date", "")
-        ))
-    for w in parsed.get("work_experience", []):
-        db.add(ResumeWorkExperience(resume_id=resume.id, **w))
-    for s in parsed.get("skills", []):
-        db.add(ResumeSkill(
-            resume_id=resume.id,
-            skill_name=s.get("skill_name", "技能"),
-            level=s.get("level", "熟练"),
-            evidence=s.get("evidence")
-        ))
-    db.commit()
-    db.refresh(resume)
-    resume.completeness = calculate_completeness(resume)
-    db.commit()
-
-    return ResponseModel(data=ResumeAIParseResult(
-        educations=[EducationItem(**e) for e in parsed.get("education", [])],
-        projects=[ProjectItem(name=p["name"], role=p["role"], description=p["description"], technologies=p.get("technologies", ""), start_date=p["start_date"], end_date=p["end_date"]) for p in parsed.get("projects", [])],
-        work_experiences=[WorkExperienceItem(**w) for w in parsed.get("work_experience", [])],
-        skills=[SkillItem(skill_name=s["skill_name"], level=s["level"], evidence=s.get("evidence")) for s in parsed.get("skills", [])],
-        warnings=parsed.get("warnings", [])
-    ))
-
 @router.post("/resumes/{id}/optimize", response_model=ResponseModel[ResumeAIOptimizeResult])
 async def optimize_resume_ai(id: int, current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
     resume = db.query(Resume).filter(Resume.id == id, Resume.user_id == current_user.id).first()
@@ -416,3 +356,118 @@ async def apply_resume_optimization(id: int, current_user: User = Depends(requir
         changes=changes,
         provenance=rewrite.get("_ai_meta", {"source": "UNKNOWN"})
     ))
+
+
+# ============================================================================
+# 简历原文档（与在线结构化简历分离存放）
+# ============================================================================
+
+@router.get("/resume-documents", response_model=ResponseModel[List[ResumeDocumentOut]])
+def list_resume_documents(current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
+    docs = db.query(ResumeDocument).filter(
+        ResumeDocument.user_id == current_user.id
+    ).order_by(ResumeDocument.id.desc()).all()
+    return ResponseModel(data=[ResumeDocumentOut.model_validate(d) for d in docs])
+
+
+@router.post("/resume-documents", response_model=ResponseModel[ResumeDocumentOut])
+def create_resume_document(req: ResumeDocumentCreate, current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
+    validate_owned_file(db, current_user.id, req.file_url)
+    doc = ResumeDocument(
+        user_id=current_user.id,
+        file_url=req.file_url,
+        file_name=req.file_name or "简历原文档"
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    log_operation(db, current_user.id, current_user.email, "PERSONAL", "UPLOAD_RESUME_DOC", "RESUME_DOCUMENT", doc.id, f"上传简历原文档【{doc.file_name}】")
+    return ResponseModel(data=ResumeDocumentOut.model_validate(doc))
+
+
+@router.delete("/resume-documents/{id}", response_model=ResponseModel[dict])
+def delete_resume_document(id: int, current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
+    doc = db.query(ResumeDocument).filter(
+        ResumeDocument.id == id, ResumeDocument.user_id == current_user.id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    db.delete(doc)
+    db.commit()
+    return ResponseModel(data={"message": "文档已删除"})
+
+
+@router.post("/resume-documents/{id}/parse", response_model=ResponseModel[ResumeOut])
+async def parse_resume_document(id: int, current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
+    """解析原文档并生成一条独立的在线简历记录（不影响既有简历）。"""
+    doc = db.query(ResumeDocument).filter(
+        ResumeDocument.id == id, ResumeDocument.user_id == current_user.id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    validate_owned_file(db, current_user.id, doc.file_url)
+    resume_text = extract_file_text(doc.file_url)
+    if not resume_text:
+        raise HTTPException(503, "未能从文档中抽取到文本，请确认文件内容后重试")
+
+    with ai_context(current_user.id, doc.id):
+        parsed = await ai_provider.parse_resume(resume_text)
+    meta = parsed.get("_ai_meta", {})
+    if meta.get("source") != "REAL":
+        raise HTTPException(503, "真实简历解析暂不可用，文档已保存，请稍后重试或手动填写；模拟内容不会写入个人简历")
+
+    # 创建独立在线简历并回填解析结果（若用户尚无任何简历则设为默认）
+    has_resume = db.query(Resume).filter(
+        Resume.user_id == current_user.id, Resume.is_deleted == False
+    ).first() is not None
+    new_resume = Resume(
+        user_id=current_user.id,
+        name=doc.file_name.rsplit(".", 1)[0] or "简历原文档解析",
+        is_default=not has_resume,
+        target_job_title="",
+        completeness=0
+    )
+    db.add(new_resume)
+    db.commit()
+    db.refresh(new_resume)
+
+    for e in parsed.get("education", []):
+        db.add(ResumeEducation(resume_id=new_resume.id, **e))
+    for p in parsed.get("projects", []):
+        db.add(ResumeProject(
+            resume_id=new_resume.id,
+            name=p.get("name", "项目经历"),
+            role=p.get("role", "核心开发"),
+            description=p.get("description", ""),
+            technologies=p.get("technologies", ""),
+            start_date=p.get("start_date", ""),
+            end_date=p.get("end_date", "")
+        ))
+    for w in parsed.get("work_experience", []):
+        db.add(ResumeWorkExperience(resume_id=new_resume.id, **w))
+    for s in parsed.get("skills", []):
+        db.add(ResumeSkill(
+            resume_id=new_resume.id,
+            skill_name=s.get("skill_name", "技能"),
+            level=s.get("level", "熟练"),
+            evidence=s.get("evidence")
+        ))
+    db.commit()
+    db.refresh(new_resume)
+    new_resume.completeness = calculate_completeness(new_resume)
+    db.commit()
+
+    # 记录解析溯源
+    analysis = ResumeAIAnalysis(
+        resume_id=new_resume.id,
+        analysis_type="STRUCTURAL_PARSE",
+        result_json=json.dumps(parsed, ensure_ascii=False),
+        prompt_version=meta.get("prompt_version", "unknown"),
+        model=meta.get("model", "unknown")
+    )
+    db.add(analysis)
+    db.commit()
+
+    log_operation(db, current_user.id, current_user.email, "PERSONAL", "PARSE_RESUME_DOC", "RESUME", new_resume.id, f"由原文档【{doc.file_name}】解析生成在线简历")
+    return ResponseModel(data=build_resume_out(new_resume))

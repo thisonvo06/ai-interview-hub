@@ -5,7 +5,7 @@ from app.models.company import Company, Department, CompanyMember, CompanyVerifi
 from app.models.job import Job, Skill, JobSkill, JobCompetency, JobFavorite
 from app.models.resume import (
     Resume, ResumeEducation, ResumeProject, ResumeWorkExperience,
-    ResumeSkill, ResumeAIAnalysis
+    ResumeSkill, ResumeAIAnalysis, ResumeDocument
 )
 from app.models.application import (
     Application, ApplicationStatusHistory, CandidatePipelineRecord, CandidateTag
@@ -27,7 +27,7 @@ __all__ = [
     "Company", "Department", "CompanyMember", "CompanyVerification",
     "Job", "Skill", "JobSkill", "JobCompetency", "JobFavorite",
     "Resume", "ResumeEducation", "ResumeProject", "ResumeWorkExperience",
-    "ResumeSkill", "ResumeAIAnalysis",
+    "ResumeSkill", "ResumeAIAnalysis", "ResumeDocument",
     "Application", "ApplicationStatusHistory", "CandidatePipelineRecord", "CandidateTag",
     "Interview", "InterviewPlan", "InterviewQuestion", "InterviewAnswer",
     "AnswerEvaluation", "InterviewReport", "InterviewInvitation", "RecruiterEvaluation",

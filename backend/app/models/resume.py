@@ -90,3 +90,15 @@ class ResumeAIAnalysis(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     resume = relationship("Resume", back_populates="ai_analyses")
+
+
+class ResumeDocument(Base):
+    """用户上传的简历原文档（PDF/DOCX），与在线结构化简历独立存放。"""
+    __tablename__ = "resume_documents"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    file_url = Column(String(255), nullable=False)
+    file_name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

@@ -32,6 +32,9 @@
               <el-icon><Clock /></el-icon>
               <span>剩余时间 <strong>{{ formatTime(remainingSeconds) }}</strong></span>
             </div>
+            <el-button type="warning" plain size="small" class="abort-btn" title="快捷键 Esc" @click="handleConfirmAbort">
+              取消面试 (Esc)
+            </el-button>
             <el-button type="danger" plain size="small" class="abort-btn" @click="handleConfirmFinish">
               结束面试
             </el-button>
@@ -684,6 +687,11 @@ const submitCurrentAnswer = async () => {
 }
 
 const handleConfirmFinish = () => {
+  // 无任何作答时交卷必被后端 409 拒绝（"尚无评分记录"），直接引导走取消
+  if (!session.value?.answered_count) {
+    ElMessage.warning('尚无任何作答记录，无法生成报告；如需退出请使用"取消面试"（或按 Esc）')
+    return
+  }
   ElMessageBox.confirm('确定要提前结束本次模拟面试并生成答题报告吗？', '提示', {
     confirmButtonText: '确定交卷',
     cancelButtonText: '继续作答',
@@ -695,22 +703,50 @@ const handleConfirmFinish = () => {
   }).catch(() => {})
 }
 
-// 整场时间归零：自动交卷生成报告（当前题如有未提交内容一并交上）
+// 取消面试：中止会话、不生成报告，随时可退出（含一题未答的场景）
+const handleConfirmAbort = () => {
+  ElMessageBox.confirm('确定取消本次模拟面试吗？取消后不生成答题报告，本次会话以"已中止"归档。', '取消确认', {
+    confirmButtonText: '确定取消',
+    cancelButtonText: '继续作答',
+    type: 'warning'
+  }).then(async () => {
+    await interviewApi.abortInterview(Number(route.params.id))
+    router.push('/personal/interviews')
+  }).catch(() => {})
+}
+
+// 快捷键 Esc：唤起"取消面试"确认（中止不可逆，保留一步确认防误触）
+const handleGlobalKeydown = (e: KeyboardEvent) => {
+  if (e.key !== 'Escape' || evaluating.value) return
+  // 已有弹窗打开时，Esc 归弹窗自身处理（关闭弹窗），不重复触发
+  if (document.querySelector('.el-message-box__wrapper, .el-message-box')) return
+  handleConfirmAbort()
+}
+
+// 整场时间归零：自动交卷生成报告（当前题如有未提交内容一并交上）；一题未答则自动中止
 let autoFinished = false
 watch(remainingSeconds, async (val) => {
   if (val > 0 || autoFinished || !session.value) return
   autoFinished = true
-  ElMessage.warning('整场面试时间已用完，正在自动交卷生成报告...')
+  const interviewId = Number(route.params.id)
   try {
     if (answerText.value.trim() && currentQuestion.value?.id) {
-      await interviewApi.answerQuestion(Number(route.params.id), {
+      await interviewApi.answerQuestion(interviewId, {
         question_id: currentQuestion.value.id,
         text: answerText.value,
         duration_sec: questionElapsed.value
       }).catch(() => {})
     }
-    await interviewApi.finishInterview(Number(route.params.id))
-    router.push(`/interviews/${Number(route.params.id)}/report`)
+    if (!session.value.answered_count) {
+      // 无任何作答：交卷必 409，自动走中止归档
+      ElMessage.warning('整场面试时间已用完且无作答记录，本次面试已自动中止')
+      await interviewApi.abortInterview(interviewId).catch(() => {})
+      router.push('/personal/interviews')
+      return
+    }
+    ElMessage.warning('整场面试时间已用完，正在自动交卷生成报告...')
+    await interviewApi.finishInterview(interviewId)
+    router.push(`/interviews/${interviewId}/report`)
   } catch (e) {
     ElMessage.error('自动交卷失败，请手动点击"结束面试"')
     autoFinished = false
@@ -719,9 +755,11 @@ watch(remainingSeconds, async (val) => {
 
 onMounted(() => {
   loadSession()
+  window.addEventListener('keydown', handleGlobalKeydown)
 })
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown)
   if (timer) clearInterval(timer)
   transcribing.value = false
   try { recognition?.abort() } catch { /* ignore */ }

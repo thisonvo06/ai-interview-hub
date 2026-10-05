@@ -1,5 +1,23 @@
 # 更新日志
 
+## 2026-10-05（简历中心改版与 AI 解析提速）
+
+- **简历中心重构为「在线简历 / 原文档」双 Tab**（在线简历与上传的原始文件分离存放，互不污染）：
+  - **数据与迁移**：新增 `resume_documents` 表（`models/resume.py::ResumeDocument`，仅存 file_url/file_name），Alembic 迁移 `0007_resume_documents`；需 `alembic upgrade head` 建表
+  - **后端新接口**（`resumes.py`，登录可用）：`GET/POST/DELETE /resume-documents`（文档列表/登记/删除，登记校验文件归属）；`POST /resume-documents/{id}/parse` 解析原文档并**生成一条独立的在线简历**回填结构化经历（不影响既有简历；用户首条简历自动设为默认；解析非真实来源时 503 拒绝落库）
+  - **删除旧接口 `POST /resumes/{id}/parse`**：其"解析结果无条件追加"存在重复叠加缺陷（手动编辑过的简历再解析会翻倍），且新方案下前端已无调用入口
+  - **在线简历 Tab**：卡片按钮统一为 结构化编辑 / AI诊断优化 / 更多操作（设为默认、删除）；移除卡片上的目标岗位行与文件相关按钮；按钮统一为深绿主题（浅绿底深绿字、悬停反白），文字清晰可读
+  - **原文档 Tab**：左右分栏布局——左侧文档列表（点击选中高亮），右侧常驻内嵌预览区（PDF 用浏览器原生查看器 iframe，DOC/DOCX 显示引导提示 + 新窗口打开）；每项操作为 解析为在线简历 / 删除；上传成功后自动选中新文档
+  - **新建简历不再预填数据**：`createNewResume` 仅传 `is_default`；后端 `ResumeCreate.target_job_title` 默认值由 `"Java后端开发工程师"` 改为空串
+- **AI 解析提速（修复简历解析必超时 503）**：
+  - **根因**：`qwen3` 系列默认开启思考模式，结构化解析前先生成数千推理 token（实测输出 6606 tokens / 90s），固定 25s 超时必然降级 mock 并被溯源保护拦截
+  - **修复**（`ai/provider.py`）：模型名含 qwen 时下发 `enable_thinking:false`（实测 **90s → ~10s**，输出 642 tokens；非 qwen 供应商不下发避免 400）；`httpx` 超时改为分阶段 `connect=10s / read=120s / write=30s`
+  - **解析 prompt 重写**：显式给出目标 JSON schema、限制字段长度（描述≤40字）、输入文本压缩空行并截断 4000 字符
+  - 前端解析请求单独放宽 axios 超时至 150s（`api/index.ts`）
+- **其他修复**：`ResumeDocumentOut` 补 `ConfigDict(from_attributes=True)`（Pydantic v2 校验 SQLAlchemy ORM 对象必需，缺失导致文档登记 500）
+- **验证**：`vue-tsc` 通过；后端 `py_compile` 通过；真实 PDF 端到端压测确认解析 ~10s 返回合法 JSON
+- **部署提示**：后端 uvicorn 无 `--reload`，代码更新后需重启进程（`一键关闭.bat` → `一键打开.bat`）
+
 ## 2026-10-05
 - **用户级 AI 配置（修复设置页 403 权限拦截）**：求职者「账号与隐私」页加载即弹【权限拦截】——根因为页面并发调用管理员专属接口 `GET /public/ai-stats`。方案为按用户隔离的 AI 配置，而非放开全局权限
   - 数据与迁移：新增 `user_ai_settings` 表（`models/system.py::UserAISetting`，user_id 主键），Alembic 迁移 `0006_user_ai_settings`
