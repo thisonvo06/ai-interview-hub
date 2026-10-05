@@ -82,8 +82,8 @@
         </div>
       </el-tab-pane>
 
-      <!-- 活跃会话 -->
-      <el-tab-pane label="活跃会话" name="sessions">
+      <!-- 活跃会话（仅管理员可见） -->
+      <el-tab-pane v-if="isAdmin" label="活跃会话" name="sessions">
         <div class="settings-section">
           <div class="section-header">
             <div>
@@ -162,11 +162,20 @@
         <div class="settings-section" style="max-width: 560px;">
           <div class="section-header">
             <div>
-              <h3 class="section-title">大模型服务接入 (API Key)</h3>
-              <p class="section-sub">接入 OpenAI 兼容协议的大模型后，简历诊断、模拟面试评分、学习路线等 AI 能力将使用真实模型；留空则回退内置沙箱 (Mock)。</p>
+              <h3 class="section-title">{{ isAdmin ? '大模型服务接入 (API Key)' : '个人大模型服务接入 (API Key)' }}</h3>
+              <p class="section-sub">{{ isAdmin
+                ? '接入 OpenAI 兼容协议的大模型后，简历诊断、模拟面试评分、学习路线等 AI 能力将使用真实模型；留空则回退内置沙箱 (Mock)。'
+                : '填写您自己的 API Key 后，您的 AI 功能将使用真实模型，且仅影响您本人的调用；未配置时使用平台默认（沙箱或管理员配置）。' }}</p>
             </div>
           </div>
 
+          <el-alert
+            v-if="!isAdmin"
+            type="info"
+            :closable="false"
+            class="ai-alert"
+            :title="aiHasPersonal ? '当前生效：您的个人 AI 配置' : '当前生效：平台默认配置（您尚未绑定个人 Key）'"
+          />
           <el-alert
             v-if="!aiLoading && !aiConfigured"
             type="info"
@@ -223,12 +232,13 @@
                 :placeholder="aiKeyMasked ? `已保存 (${aiKeyMasked})，留空表示不修改` : '请输入 API Key'"
                 :disabled="aiForm.mode === 'MOCK'"
               />
-              <div class="ai-tip">Key 仅保存在本实例数据库中，页面只回显掩码，不会明文展示；已配置后仅平台管理员可修改。</div>
+              <div class="ai-tip">Key 仅保存在本实例数据库中，页面只回显掩码，不会明文展示。{{ isAdmin ? '该配置为平台全局配置，影响所有用户。' : '该配置为您个人专属，仅影响您自己的 AI 调用。' }}</div>
             </el-form-item>
 
             <el-form-item>
               <el-button :loading="aiTesting" :disabled="aiForm.mode === 'MOCK'" @click="handleAiTest">测试连接</el-button>
               <el-button type="primary" :loading="aiSaving" @click="handleAiSave">保存配置</el-button>
+              <el-button v-if="!isAdmin && aiHasPersonal" @click="handleAiReset">清除个人配置</el-button>
             </el-form-item>
           </el-form>
 
@@ -245,7 +255,7 @@
           <div v-if="aiStats" class="ai-stats-panel" v-loading="aiStatsLoading">
             <h4 class="ai-stats-title">
               <el-icon><DataAnalysis /></el-icon>
-              服务用量统计
+              {{ isAdmin ? '服务用量统计' : '我的用量统计' }}
             </h4>
             <div class="ai-stats-grid">
               <div class="ai-stat-item">
@@ -280,10 +290,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { Monitor, DataAnalysis } from '@element-plus/icons-vue'
 import { personalApi, authApi, publicApi } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
+
+const authStore = useAuthStore()
+const isAdmin = computed(() => authStore.isAdmin)
 
 const activeTab = ref('security')
 const pwdLoading = ref(false)
@@ -470,16 +484,20 @@ const applyAiPreset = (p: typeof aiPresets[number]) => {
   aiForm.model = p.model
 }
 
+// 管理员读写全局配置，普通用户读写个人配置（个人 Key 仅影响自身调用）
+const aiHasPersonal = ref(false)
+
 const fetchAIConfig = async () => {
   aiLoading.value = true
   try {
-    const res: any = await publicApi.getAISettings()
+    const res: any = isAdmin.value ? await publicApi.getAISettings() : await personalApi.getPersonalAIConfig()
     if (res) {
       aiForm.mode = res.mode === 'MOCK' ? 'MOCK' : 'REAL'
       aiForm.base_url = res.base_url || aiForm.base_url
       aiForm.model = res.model || aiForm.model
       aiKeyMasked.value = res.api_key_masked || ''
       aiConfigured.value = !!res.configured
+      aiHasPersonal.value = !!res.has_personal
     }
   } catch {
     // 读取失败时保持默认，允许直接填写
@@ -500,16 +518,31 @@ const handleAiTest = async () => {
   aiTesting.value = true
   aiTestResult.value = null
   try {
-    const res: any = await publicApi.testAISettings({
+    const payload = {
       base_url: aiForm.base_url,
       api_key: aiForm.api_key,
       model: aiForm.model
-    })
+    }
+    const res: any = isAdmin.value
+      ? await publicApi.testAISettings(payload)
+      : await personalApi.testPersonalAIConfig(payload)
     aiTestResult.value = res || { success: false, message: '测试接口无返回' }
   } catch (err: any) {
     aiTestResult.value = { success: false, message: err.message || '测试请求失败' }
   } finally {
     aiTesting.value = false
+  }
+}
+
+const handleAiReset = async () => {
+  try {
+    await personalApi.resetPersonalAIConfig()
+    ElMessage.success('已清除个人 AI 配置，回退到平台默认')
+    aiForm.api_key = ''
+    await fetchAIConfig()
+    await fetchAIStats()
+  } catch {
+    // 拦截器已提示
   }
 }
 
@@ -522,7 +555,9 @@ const handleAiSave = async () => {
   try {
     const payload: any = { mode: aiForm.mode, base_url: aiForm.base_url, model: aiForm.model }
     if (aiForm.api_key) payload.api_key = aiForm.api_key
-    const res: any = await publicApi.updateAISettings(payload)
+    const res: any = isAdmin.value
+      ? await publicApi.updateAISettings(payload)
+      : await personalApi.updatePersonalAIConfig(payload)
     ElMessage.success(res?.message || '配置已保存并生效')
     await fetchAIConfig()
     aiForm.api_key = ''
@@ -546,7 +581,7 @@ const formatTokens = (n: number) => {
 const fetchAIStats = async () => {
   aiStatsLoading.value = true
   try {
-    aiStats.value = await publicApi.getAIStats()
+    aiStats.value = isAdmin.value ? await publicApi.getAIStats() : await personalApi.getPersonalAIUsage()
   } catch {
     // 读取失败不阻塞
   } finally {
@@ -561,7 +596,7 @@ const formatDate = (val: string) => {
 
 onMounted(() => {
   fetchConsents()
-  fetchSessions()
+  if (isAdmin.value) fetchSessions()
   fetchNotifyPrefs()
   fetchAIConfig()
   fetchAIStats()

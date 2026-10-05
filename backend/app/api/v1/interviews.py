@@ -35,17 +35,18 @@ from app.ai.provider import ai_provider
 
 router = APIRouter(tags=["AI 模拟面试与复盘"])
 
-# 题库为空（未灌库）时的兜底题，保证面试流程不中断
+# 题库为空（未灌库）时的兜底题，保证面试流程不中断。
+# 刻意保持行业中性（不绑定具体技术栈），任何岗位组卷都不跑题。
 FALLBACK_QUESTIONS = [
-    {"text": "请介绍一个你深度参与的项目，说明你负责的核心模块、遇到的最大技术难点以及最终的解决思路与量化收益。",
+    {"text": "请介绍一个你深度参与的项目或任务，说明你负责的核心部分、遇到的最大难点以及最终的解决思路与量化收益。",
      "question_type": "GENERAL", "skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM", "time_limit_sec": 240},
-    {"text": "在高并发场景下，你如何保障缓存与数据库的一致性？请说明至少两种方案的适用边界与取舍。",
-     "question_type": "PROFESSIONAL", "skill_name": "Redis", "stage": "专业基础", "difficulty": "MEDIUM", "time_limit_sec": 180},
-    {"text": "请说明一次线上故障的完整处置过程：发现问题后的第一步是什么，如何定位根因，事后做了哪些机制性改进？",
+    {"text": "谈谈你对应聘岗位核心职责的理解，以及你认为胜任这个岗位最关键的三项能力是什么？",
+     "question_type": "PROFESSIONAL", "skill_name": "岗位理解", "stage": "专业基础", "difficulty": "MEDIUM", "time_limit_sec": 180},
+    {"text": "请说明一次你亲历的紧急问题处置过程：发现问题后的第一步是什么，如何定位根因，事后做了哪些机制性改进？",
      "question_type": "STRESS", "skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD", "time_limit_sec": 150},
-    {"text": "你如何设计一个接口的幂等机制？请给出至少两种不同强度的方案，并说明各自的适用场景。",
-     "question_type": "PROFESSIONAL", "skill_name": "后端设计", "stage": "深度探究", "difficulty": "MEDIUM", "time_limit_sec": 180},
-    {"text": "谈谈你对所在岗位未来两年能力要求的理解，以及你计划如何补齐自身与要求之间的差距。",
+    {"text": "当多个任务同时到期且资源不够时，你如何决定先后顺序？请结合一次真实经历说明你的取舍标准。",
+     "question_type": "PROFESSIONAL", "skill_name": "优先级管理", "stage": "深度探究", "difficulty": "MEDIUM", "time_limit_sec": 180},
+    {"text": "你如何理解所在岗位未来两年的能力要求变化？你计划如何补齐自身与要求之间的差距？",
      "question_type": "GENERAL", "skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY", "time_limit_sec": 150},
 ]
 
@@ -339,11 +340,15 @@ async def create_interview(req: InterviewCreate, current_user: User = Depends(re
         # 题库缺口：按题型走 AI 兜底生成
         missing_total = sum(paper.missing.values()) if paper.missing else 0
         start_seq = len(paper.slots)
+        ai_used_texts = [s.text for s in paper.slots]
         for i in range(missing_total):
             q_data = await ai_provider.generate_question(
                 job_title=job_title, seq=start_seq + i + 1, difficulty=req.difficulty,
-                jd_text=jd_text, resume_context=resume_context
+                jd_text=jd_text, resume_context=resume_context,
+                used_texts=list(ai_used_texts)
             )
+            if q_data.get("question"):
+                ai_used_texts.append(q_data["question"])
             db.add(InterviewQuestion(
                 interview_id=interview.id,
                 seq=start_seq + i + 1,
@@ -381,7 +386,8 @@ async def create_interview(req: InterviewCreate, current_user: User = Depends(re
                 difficulty=req.difficulty,
                 last_question=used_texts[-1] if used_texts else None,
                 jd_text=jd_text,
-                resume_context=resume_context
+                resume_context=resume_context,
+                used_texts=list(used_texts)
             )
             text = q_data.get("question") or ""
             if not text:

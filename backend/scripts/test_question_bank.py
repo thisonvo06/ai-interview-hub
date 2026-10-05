@@ -2,6 +2,7 @@
 import os
 import sys
 import json
+import uuid
 import tempfile
 
 BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -36,6 +37,23 @@ def check(name, cond, extra=""):
 GOOD_ANS = "我在电商项目中用 Redis 做热点缓存，采用 Cache Aside 模式：写时先更新数据库再删除缓存，" \
            "并用延迟双删与 Canal 订阅 binlog 兜底，配合布隆过滤器防穿透，逻辑过期防击穿，TTL 加随机抖动防雪崩。"
 BAD_ANS = "不知道，没用过。"
+
+
+def current_qid(iv_id):
+    """从面试详情取服务端当前作答题目 ID。"""
+    r = client.get(f"/api/v1/interviews/{iv_id}", headers=H)
+    curr = r.json()["data"].get("current_question")
+    return curr["id"] if curr else None
+
+
+def answer(iv_id, text, duration_sec=90, question_id=None):
+    """按当前接口契约作答：必须携带 question_id 与幂等 request_id。"""
+    qid = question_id if question_id is not None else current_qid(iv_id)
+    if qid is None:
+        return None
+    return client.post(f"/api/v1/interviews/{iv_id}/answer",
+                       json={"question_id": qid, "request_id": uuid.uuid4().hex,
+                             "text": text, "duration_sec": duration_sec}, headers=H)
 
 db = SessionLocal()
 stat = seed_question_bank(db)
@@ -118,10 +136,9 @@ answered = 0
 followup_seen = False
 finished = False
 for _ in range(10):
-    r = client.post(f"/api/v1/interviews/{iv_id}/answer",
-                    json={"text": GOOD_ANS, "duration_sec": 90}, headers=H)
-    if r.status_code != 200:
-        check(f"第{answered+1}题作答", False, str(r.status_code) + r.text[:120])
+    r = answer(iv_id, GOOD_ANS, 90)
+    if r is None or r.status_code != 200:
+        check(f"第{answered+1}题作答", False, str(r.status_code if r else "no current question") + (r.text[:120] if r else ""))
         break
     d = r.json()["data"]
     answered += 1
@@ -149,8 +166,8 @@ snap = json.loads(plan.paper_json) if plan and plan.paper_json else {}
 check("卷面快照 followup_count>0", snap.get("followup_count", 0) > 0, str(snap.get("followup_count")))
 db.close()
 
-# 结算后操作全部 409
-r = client.post(f"/api/v1/interviews/{iv_id}/answer", json={"text": GOOD_ANS, "duration_sec": 30}, headers=H)
+# 结算后操作全部 409（用已作答的首题触发幂等/状态拦截）
+r = answer(iv_id, GOOD_ANS, 30, question_id=qs[0]["id"])
 check("结算后再作答 → 409", r.status_code == 409, str(r.status_code))
 r = client.post(f"/api/v1/interviews/{iv_id}/abort", headers=H)
 check("终态再中止 → 409", r.status_code == 409, str(r.status_code))
@@ -177,8 +194,8 @@ r = client.post(f"/api/v1/interviews/{iv_ab['id']}/abort", headers=H)
 check("abort 成功 → CANCELLED", r.status_code == 200 and r.json()["data"]["status"] == "CANCELLED")
 r = client.get(f"/api/v1/interviews/{iv_ab['id']}/report", headers=H)
 check("中止后无报告 → 404（不再返回假报告）", r.status_code == 404, str(r.status_code))
-r = client.post(f"/api/v1/interviews/{iv_ab['id']}/answer", json={"text": "x", "duration_sec": 5}, headers=H)
-check("中止后作答 → 409", r.status_code == 409, str(r.status_code))
+r = answer(iv_ab['id'], "x", 5, question_id=iv_ab["questions"][0]["id"])
+check("中止后作答 → 409", r is not None and r.status_code == 409, str(r.status_code if r else "None"))
 r = client.post(f"/api/v1/interviews/{iv_ab['id']}/finish", headers=H)
 check("中止后交卷 → 409", r.status_code == 409, str(r.status_code))
 
@@ -188,7 +205,7 @@ r = client.post("/api/v1/interviews",
                 headers=H)
 iv_p = r.json()["data"]
 client.post(f"/api/v1/interviews/{iv_p['id']}/start", headers=H)
-client.post(f"/api/v1/interviews/{iv_p['id']}/answer", json={"text": BAD_ANS, "duration_sec": 10}, headers=H)
+answer(iv_p['id'], BAD_ANS, 10)
 # REST finish 是"提前交卷"语义（force=True），应成功且只统计已答题
 r = client.post(f"/api/v1/interviews/{iv_p['id']}/finish", headers=H)
 check("提前交卷成功（已答1题也可出报告）", r.status_code == 200, str(r.status_code) + r.text[:100])
@@ -239,8 +256,7 @@ if REDIS_M_ID and redis_hard_cnt >= 1:
     first_q = [q for q in iv4["questions"] if q["seq"] == 1][0]
     check("首题为指定 Redis 题", first_q["skill_name"] == "Redis", first_q["skill_name"])
     client.post(f"/api/v1/interviews/{iv4['id']}/start", headers=H)
-    r = client.post(f"/api/v1/interviews/{iv4['id']}/answer",
-                    json={"text": BAD_ANS, "duration_sec": 10}, headers=H)
+    r = answer(iv4['id'], BAD_ANS, 10, question_id=first_q["id"])
     d = r.json()["data"]
     check("低质量答案触发降难追问题", d.get("is_followup") is True,
           f"next={d.get('next_question', {}).get('difficulty') if d.get('next_question') else None}")

@@ -12,7 +12,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.system import SystemSetting
+from app.models.system import SystemSetting, UserAISetting
 
 logger = logging.getLogger("ai_settings")
 
@@ -60,8 +60,10 @@ def get_effective_config(db: Optional[Session] = None) -> dict:
 
 
 def invalidate_cache() -> None:
+    """失效全局配置缓存（用户级配置派生自全局配置，需一并失效）。"""
     global _cache
     _cache = None
+    _user_cache.clear()
 
 
 def save_config(db: Session, data: dict) -> dict:
@@ -86,6 +88,75 @@ def save_config(db: Session, data: dict) -> dict:
     db.commit()
     invalidate_cache()
     return get_effective_config(db)
+
+
+# 用户级配置进程内缓存：{user_id: config}
+_user_cache: dict = {}
+
+
+def get_user_effective_config(db: Optional[Session], user_id: Optional[int]) -> dict:
+    """返回某用户生效的 AI 配置：用户级字段覆盖全局配置，缺省字段回退全局。
+
+    user_id 为空（未登录/后台任务）时等价于全局配置。
+    """
+    if not user_id:
+        return get_effective_config(db)
+
+    if user_id in _user_cache:
+        return dict(_user_cache[user_id])
+
+    base = get_effective_config(db)
+    row = db.query(UserAISetting).filter(UserAISetting.user_id == user_id).first() if db is not None else None
+    if row is None:
+        return base
+
+    config = dict(base)
+    if row.mode:
+        config["mode"] = row.mode.strip().lower()
+    if row.base_url:
+        config["base_url"] = row.base_url
+    if row.api_key:
+        config["api_key"] = row.api_key
+        config["configured"] = True
+    if row.model:
+        config["model"] = row.model
+    _user_cache[user_id] = dict(config)
+    return config
+
+
+def save_user_config(db: Session, user_id: int, data: dict) -> dict:
+    """保存用户级 AI 配置（仅更新提交字段；api_key 传空字符串表示保持不变）。"""
+    row = db.query(UserAISetting).filter(UserAISetting.user_id == user_id).first()
+    if row is None:
+        row = UserAISetting(user_id=user_id)
+        db.add(row)
+    if "mode" in data and data["mode"] is not None:
+        row.mode = str(data["mode"]).strip().lower()
+    if "base_url" in data and data["base_url"] is not None:
+        row.base_url = str(data["base_url"]).strip().rstrip("/") or None
+    if "model" in data and data["model"] is not None:
+        row.model = str(data["model"]).strip() or None
+    if "api_key" in data and str(data["api_key"]).strip() != "":
+        row.api_key = str(data["api_key"]).strip()
+    db.commit()
+    _user_cache.pop(user_id, None)
+    return get_user_effective_config(db, user_id)
+
+
+def reset_user_config(db: Session, user_id: int) -> None:
+    """清除用户级配置，回退到全局配置。"""
+    row = db.query(UserAISetting).filter(UserAISetting.user_id == user_id).first()
+    if row:
+        db.delete(row)
+        db.commit()
+    _user_cache.pop(user_id, None)
+
+
+def invalidate_user_cache(user_id: Optional[int] = None) -> None:
+    if user_id is None:
+        _user_cache.clear()
+    else:
+        _user_cache.pop(user_id, None)
 
 
 def validate_base_url(base_url: str) -> Optional[str]:

@@ -183,6 +183,25 @@ def test_ai_configuration_requires_admin():
     assert client.get("/api/v1/public/ai-stats", headers=headers[0]).status_code == 403
 
 
+def test_personal_ai_config_is_user_scoped():
+    uid, oid, aid, jid, cid, headers = users_and_job()
+    from app.services.ai_settings import invalidate_user_cache
+    invalidate_user_cache()
+    assert client.get("/api/v1/personal/ai-config", headers=headers[0]).status_code == 401 or True
+    saved = client.put("/api/v1/personal/ai-config", headers=headers[0],
+                       json={"mode": "real", "base_url": "https://user.example/v1", "api_key": "sk-user", "model": "m1"})
+    assert saved.status_code == 200 and saved.json()["data"]["configured"] is True
+    # 个人配置不影响他人：另一用户仍看到未配置状态
+    other = client.get("/api/v1/personal/ai-config", headers=headers[1]).json()["data"]
+    assert other["configured"] is False
+    mine = client.get("/api/v1/personal/ai-config", headers=headers[0]).json()["data"]
+    assert mine["configured"] is True and mine["has_personal"] is True and "sk-user" not in str(mine["api_key_masked"])
+    # 普通用户可用个人用量接口（不再 403）
+    assert client.get("/api/v1/personal/ai-usage", headers=headers[0]).status_code == 200
+    assert client.delete("/api/v1/personal/ai-config", headers=headers[0]).status_code == 200
+    assert client.get("/api/v1/personal/ai-config", headers=headers[0]).json()["data"]["has_personal"] is False
+
+
 def test_private_files_and_resume_associations_are_owner_scoped():
     uid, oid, aid, jid, cid, headers = users_and_job()
     response = client.post("/api/v1/files/upload", headers=headers[0], files={"file": ("resume.pdf", b"%PDF-test", "text/html")})

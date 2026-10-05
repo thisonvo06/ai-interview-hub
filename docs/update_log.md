@@ -1,5 +1,24 @@
 # 更新日志
 
+## 2026-10-05
+- **用户级 AI 配置（修复设置页 403 权限拦截）**：求职者「账号与隐私」页加载即弹【权限拦截】——根因为页面并发调用管理员专属接口 `GET /public/ai-stats`。方案为按用户隔离的 AI 配置，而非放开全局权限
+  - 数据与迁移：新增 `user_ai_settings` 表（`models/system.py::UserAISetting`，user_id 主键），Alembic 迁移 `0006_user_ai_settings`
+  - 服务层（`services/ai_settings.py`）：`get_user_effective_config`（用户字段覆盖全局、缺省回退全局，按用户进程内缓存，全局保存联动失效）、`save_user_config`、`reset_user_config`
+  - 调用链路：`AIProvider._current_config` 从请求上下文（trace 中间件的 `call_context.user_id`）解析生效配置——**个人 Key 仅影响本人 AI 调用**，后台任务/未登录回退全局
+  - 新接口（`personal.py`，登录即可用）：`GET/PUT/DELETE /personal/ai-config`（读/存/清除个人配置，Key 仅掩码回显）、`POST /personal/ai-config/test`（测试连接）、`GET /personal/ai-usage`（仅本人用量统计）；全局 `/public/ai-settings`、`/public/ai-stats` 保持管理员专属不变
+  - 前端：`Settings.vue` AI 标签页按 `isAdmin` 分流（管理员→全局接口，普通用户→个人接口 + "清除个人配置"），文案区分"个人专属仅影响自己"；「活跃会话」标签页按需求改为仅管理员可见；`api/index.ts` 补 5 个封装
+  - 验证：新增 `test_personal_ai_config_is_user_scoped`（个人配置隔离、不污染他人/全局、用量接口不再 403）；pytest 全量 69 passed；`vue-tsc` 通过
+- **模拟面试非技术岗位覆盖扩展**（此前题库/出题/报告均偏 Java/后端）：
+  - **题库 86 → 118 题**（`data/question_bank.py`）：新增 8 个非技术大类——产品经理/用户运营/销售商务/人力资源/财务审计/市场品牌/交互视觉设计/客户成功，各 4 道专业题（专业基础×2 + 深度探究 + 项目深挖），全部含 `reference_points` 评分锚点；通用题/压力题沿用"通用"大类由组卷两级匹配覆盖
+  - **修复岗位大类断点**：`JobCreate.vue` 此前不提交 `category`，所有新建岗位静默落默认"后端开发"——新增「岗位大类」下拉（19 类与题库对齐）并接入 payload/编辑回显/JD 解析回填；`parse_jd` prompt 约束 category 只能从 19 个大类取值；`JobSquare.vue` 筛选栏补 8 个非技术大类
+  - **Mock 出题引擎按岗位选题**（`ai/mock_data.py`）：新增 `detect_job_category`（15 大类关键词识别，优先级排序防误吞）与分类出题池 `MOCK_QUESTION_BANK_BY_CATEGORY`（15 组 × 6 题 + 通用兜底）；重写 `generate_adaptive_mock_question`——删除写死的 Redis 首题与 Java 专属追问分支，改为按大类取题、答差降难 EASY/答好升难 HARD、`used_texts` 同场去重；`FALLBACK_QUESTIONS` 兜底题去后端化（行业中性）；三处调用点（创建面试/缺口补题/作答链路）传入已用题干
+  - **报告维度自适应**：新增 `is_technical_role`/`report_dimension_names`——非技术岗五维雷达"系统设计"→"业务理解"；`generate_mock_report` 反馈文案随岗位类型切换（非技术岗不再出现"高并发/分布式/容灾"措辞）；`generate_report` LLM prompt 按岗位注入维度名并显式声明技术/非技术语境；`parse_jd` 约束 competencies 命名（非技术岗禁用"系统设计"，保护能力诊断口径）
+- **测试脚本修复与更新**：
+  - `scripts/test_question_bank.py`：适配 cd1db71 收紧的作答契约（必填 `question_id` + 幂等 `request_id`），新增 `answer()`/`current_qid()` 辅助，5 处调用点同步——修复 14 项连锁失败
+  - `tests/test_job_search.py`：迁移 head 断言更新至 0006
+  - 验证：pytest 69 passed；题库冒烟 44/44 全过（含自适应追问/自动结算/闭卷控制）；岗位识别 13 例抽查、两类岗位出题与报告维度差异抽查、`vue-tsc` 均通过
+  - 部署提示：需 `alembic upgrade head` 建表 + 重跑 `scripts/seed_question_bank.py` 灌入新题（幂等）
+
 ## 2026-09-30
 - **AI 引擎配置向导（方案 A：系统级全局配置，登录前可配置）**：自部署用户无需改 `.env`、无需重启，即可在页面配置自己的 LLM API-KEY / Base URL / 模型，保存即时生效
   - **后端存储与读取**：新增 `system_settings` 键值表（`models/system.py::SystemSetting`，随 create_all 自动建表）；新增 `services/ai_settings.py`——生效优先级 **DB > .env > 默认值**，进程内缓存 + 保存即失效；`AIProvider` 改为每次调用动态读取生效配置（13 处调用点零改动），未配置 Key 时照旧回退 mock

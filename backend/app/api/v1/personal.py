@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.deps import require_auth, log_operation, oauth2_scheme
@@ -615,3 +616,116 @@ def revoke_session(id: str, current_user: User = Depends(require_auth), db: Sess
         log_operation(db, current_user.id, current_user.email, "PERSONAL", "REVOKE_SESSION", "SESSION", session.id, f"强制下线设备：{session.device} ({session.ip})")
         return ResponseModel(data={"message": "该设备会话已强制下线"})
     return ResponseModel(data={"message": "会话不存在或已下线"})
+
+
+# ---------- 用户级 AI 服务配置（个人 Key 仅影响自身调用） ----------
+
+def _is_platform_admin(user: User) -> bool:
+    codes = {r.role_code for r in user.roles}
+    return user.account_type == "ADMIN" or bool(codes & {"PLATFORM_ADMIN", "SUPER_ADMIN"})
+
+
+@router.get("/personal/ai-config", response_model=ResponseModel[dict])
+def get_personal_ai_config(current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
+    """读取当前用户生效的 AI 配置（Key 仅返回掩码）。"""
+    from app.services import ai_settings
+    cfg = ai_settings.get_user_effective_config(db, current_user.id)
+    has_personal = db.query(ai_settings.UserAISetting).filter(
+        ai_settings.UserAISetting.user_id == current_user.id
+    ).first() is not None
+    return ResponseModel(data={
+        "mode": cfg["mode"].upper(),
+        "model": cfg["model"],
+        "base_url": cfg["base_url"],
+        "api_key_masked": ai_settings.mask_key(cfg["api_key"]),
+        "configured": cfg["configured"],
+        "has_personal": has_personal,
+        "is_admin": _is_platform_admin(current_user),
+    })
+
+
+@router.put("/personal/ai-config", response_model=ResponseModel[dict])
+def update_personal_ai_config(
+    data: dict,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """保存当前用户的个人 AI 配置（仅影响自身的 AI 调用，不改变全局配置）。"""
+    from app.services import ai_settings
+    base_url = str(data.get("base_url", "")).strip()
+    if base_url:
+        err = ai_settings.validate_base_url(base_url)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+    saved = ai_settings.save_user_config(db, current_user.id, data)
+    log_operation(db, current_user.id, current_user.email, "PERSONAL", "UPDATE_AI_CONFIG", "USER_AI_SETTING", current_user.id, "更新个人 AI 服务配置")
+    return ResponseModel(data={
+        "mode": saved["mode"].upper(),
+        "model": saved["model"],
+        "base_url": saved["base_url"],
+        "api_key_masked": ai_settings.mask_key(saved["api_key"]),
+        "configured": saved["configured"],
+        "message": "个人 AI 配置已保存并即时生效",
+    })
+
+
+@router.delete("/personal/ai-config", response_model=ResponseModel[dict])
+def reset_personal_ai_config(current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
+    """清除个人 AI 配置，回退到平台全局配置。"""
+    from app.services import ai_settings
+    ai_settings.reset_user_config(db, current_user.id)
+    return ResponseModel(data={"message": "已清除个人 AI 配置，回退到平台默认"})
+
+
+@router.post("/personal/ai-config/test", response_model=ResponseModel[dict])
+async def test_personal_ai_config(
+    data: dict,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """用当前用户生效的配置（或表单临时值）测试 AI 服务连接。"""
+    from app.services import ai_settings
+    cfg = ai_settings.get_user_effective_config(db, current_user.id)
+    base_url = str(data.get("base_url", "")).strip().rstrip("/") or cfg["base_url"]
+    api_key = str(data.get("api_key", "")).strip() or cfg["api_key"]
+    model = str(data.get("model", "")).strip() or cfg["model"]
+    result = await ai_settings.test_connection(base_url, api_key, model)
+    return ResponseModel(data=result)
+
+
+@router.get("/personal/ai-usage", response_model=ResponseModel[dict])
+def get_personal_ai_usage(current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
+    """当前用户自己的 AI 调用用量统计与最近记录。"""
+    from app.models.system import AICallLog
+    from app.services import ai_settings
+    cfg = ai_settings.get_user_effective_config(db, current_user.id)
+    logs = db.query(AICallLog).filter(AICallLog.user_id == current_user.id)
+    total = logs.count()
+    success = logs.filter(AICallLog.status == "SUCCESS").count()
+    tokens_in = db.query(func.sum(AICallLog.tokens_in)).filter(AICallLog.user_id == current_user.id).scalar() or 0
+    tokens_out = db.query(func.sum(AICallLog.tokens_out)).filter(AICallLog.user_id == current_user.id).scalar() or 0
+    recent = logs.order_by(AICallLog.created_at.desc()).limit(20).all()
+    return ResponseModel(data={
+        "total_calls": total,
+        "success_calls": success,
+        "error_calls": total - success,
+        "success_rate": round(success / total * 100, 1) if total > 0 else 0,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "tokens_total": tokens_in + tokens_out,
+        "current_model": cfg["model"],
+        "configured": cfg["configured"],
+        "recent_logs": [
+            {
+                "id": l.id,
+                "type": l.business_type,
+                "model": l.model,
+                "tokens_in": l.tokens_in,
+                "tokens_out": l.tokens_out,
+                "latency_ms": l.latency_ms,
+                "status": l.status,
+                "created_at": l.created_at.isoformat() if l.created_at else None,
+            }
+            for l in recent
+        ],
+    })

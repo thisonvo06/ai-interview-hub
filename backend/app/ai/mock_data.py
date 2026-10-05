@@ -1,6 +1,5 @@
 import random
 from typing import Dict, Any, List
-
 MOCK_RESUME_PARSED = {
     "education": [
         {
@@ -116,6 +115,309 @@ INTERVIEW_QUESTION_POOL = [
         "question": "如果让你设计一个能够支撑千万级日活的分布式全局唯一发号器（如雪花算法或号段模式），你会如何设计并规避时钟回拨与单点瓶颈？"
     }
 ]
+
+# 岗位大类识别关键词：把 job_title 映射到出题池分组（顺序即优先级，越靠前越专属）。
+# 覆盖技术岗与非技术岗，避免所有岗位都套 Java/Redis 题。
+_JOB_CATEGORY_KEYWORDS = [
+    ("前端", ["前端", "web前端", "javascript", "typescript", "react", "vue", "小程序", "h5", "ui工程"]),
+    ("客户端", ["安卓", "android", "ios", "鸿蒙", "客户端", "移动端", "flutter", "swift", "kotlin"]),
+    ("人工智能", ["算法", "机器学习", "深度学习", "ai", "nlp", "大模型", "推荐", "cv", "数据挖掘", "llm"]),
+    ("大数据", ["大数据", "数仓", "数据仓库", "数据平台", "hadoop", "spark", "flink", "hive", "etl", "数据开发"]),
+    ("运维安全", ["运维", "devops", "sre", "安全", "网络工程", "系统架构", "基础架构", "云计算"]),
+    ("测试", ["测试", "qa", "质量保障", "自动化测试"]),
+    ("后端", ["后端", "java", "golang", "go", "python", "c++", "php", "node", "服务端", "研发", "软件工程师", "架构师"]),
+    ("产品", ["产品经理", "产品", "pm", "需求分析"]),
+    ("运营", ["运营", "增长", "用户运营", "内容运营", "活动运营", "私域"]),
+    ("销售", ["销售", "商务", "客户经理", "大客户", "bd", "售前"]),
+    ("人力", ["人力资源", "hr", "招聘", "人事", "绩效", "薪酬"]),
+    ("财务", ["财务", "会计", "审计", "税务", "出纳"]),
+    ("市场品牌", ["市场", "品牌", "公关", "营销", "广告", "媒介"]),
+    ("设计", ["设计", "ui", "ux", "交互", "视觉", "平面", "工业设计师"]),
+    ("客户成功", ["客户成功", "售后", "客户支持", "实施顾问", "cs"]),
+]
+
+# 按岗位大类的出题池：每组 6 题，覆盖 专业基础/深度探究/项目深挖/系统设计/综合素养/压力应对，
+# 保证任意 seq 与追问（答好 DEEP / 答差 SIMPLIFY）都有同岗位、不同题干的题可选，避免重复。
+MOCK_QUESTION_BANK_BY_CATEGORY: Dict[str, List[Dict[str, Any]]] = {
+    "后端": INTERVIEW_QUESTION_POOL,  # 复用既有 Java/Redis 池
+    "前端": [
+        {"skill_name": "前端框架", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "请谈谈 Vue3 响应式的实现原理（Proxy 相比 defineProperty 的优势），以及 diff 算法在 patch 阶段做了哪些优化？"},
+        {"skill_name": "前端工程化", "stage": "深度探究", "difficulty": "HARD",
+         "question": "大型前端项目如何设计构建与性能优化方案？请从代码分割、Tree Shaking、缓存策略、首屏加载（FCP/LCP）等角度展开。"},
+        {"skill_name": "浏览器与网络", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "从输入 URL 到页面渲染，浏览器经历了哪些关键阶段？其中如何减少重排重绘、利用浏览器缓存？"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "请挑一个你负责的前端项目，讲讲你解决过的最棘手的问题（如性能瓶颈、复杂交互、兼容性），以及量化收益。"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "你如何跟进前端快速迭代的技术生态？请举一个你主动学习并落地到项目中的新技术例子。"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "线上页面因你的改动出现白屏故障，正值大促高峰，你的前 30 分钟会怎么处理？"},
+    ],
+    "客户端": [
+        {"skill_name": "移动端基础", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "请谈谈 Android/iOS 应用启动优化的关键手段，以及主线程卡顿（ANR）的成因与排查思路。"},
+        {"skill_name": "性能与内存", "stage": "深度探究", "difficulty": "HARD",
+         "question": "列表滑动卡顿与内存抖动是常见问题，你会如何定位并优化？请结合缓存复用、图片加载、内存泄漏检测说明。"},
+        {"skill_name": "架构设计", "stage": "系统设计", "difficulty": "HARD",
+         "question": "为一个多业务线 App 设计组件化/模块化架构，你会如何做模块拆分、路由通信与依赖管理？"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "讲一个你主导的客户端功能，说明技术难点（如跨端、离线、复杂动画）与最终的性能/体验收益。"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "客户端发版受应用商店审核约束，你如何规划灰度与热修复策略以降低线上风险？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "版本上线后崩溃率突然飙升且难以复现，你如何在压力下系统性地定位与止损？"},
+    ],
+    "人工智能": [
+        {"skill_name": "机器学习基础", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "请解释过拟合的成因与常见缓解手段（正则化、Dropout、早停、数据增强），并举例你在项目中如何判断模型过拟合。"},
+        {"skill_name": "模型与训练", "stage": "深度探究", "difficulty": "HARD",
+         "question": "训练大模型时显存不足怎么办？请从混合精度、梯度累积、激活重计算、并行策略等角度说明取舍。"},
+        {"skill_name": "评估指标", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "分类任务中准确率为什么可能具有误导性？请结合精确率、召回率、F1、AUC 说明如何根据业务选择指标。"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "讲一个你落地的算法/模型项目：问题定义、数据构造、baseline 到优化的迭代，以及线上收益如何量化。"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "面对一个业务指标提升需求，你如何判断该用规则、传统模型还是深度模型？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "模型离线评估很好但上线后效果大幅下跌，团队质疑你的方案，你会如何排查并沟通？"},
+    ],
+    "大数据": [
+        {"skill_name": "数据仓库", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "请说明数仓分层（ODS/DWD/DWS/ADS）的意义，以及维度建模中事实表与维度表如何设计。"},
+        {"skill_name": "计算引擎", "stage": "深度探究", "difficulty": "HARD",
+         "question": "Spark 任务出现数据倾斜时，你如何定位并解决？请结合 key 加盐、广播连接、重分区等方案说明。"},
+        {"skill_name": "数据质量", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "如何保障离线/实时数据链路的准确性与及时性？请从校验规则、监控告警、口径一致性角度说明。"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "讲一个你处理的大数据量任务：遇到的性能/成本瓶颈，你做了哪些优化，效果如何量化？"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "实时计算与离线计算各适合什么场景？你会如何为一个指标选择合适的链路？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "核心报表在业务高峰前迟迟未产出且下游催逼，你如何排查并对外沟通？"},
+    ],
+    "运维安全": [
+        {"skill_name": "系统与网络", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "一台服务器 CPU 或负载突然飙高，你的排查步骤与常用命令是什么？如何快速定位到进程与根因？"},
+        {"skill_name": "高可用架构", "stage": "深度探究", "difficulty": "HARD",
+         "question": "如何设计一套支撑业务连续性的部署与容灾方案？请从负载均衡、多活、监控告警、故障演练说明。"},
+        {"skill_name": "安全基础", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "常见 Web 攻击（SQL 注入、XSS、CSRF）的原理与防御措施分别是什么？"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "讲一次你主导的稳定性/成本优化：如何发现问题、采取什么措施、可用性（SLA）或成本改善了多少？"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "你如何看待自动化运维与人工介入的边界？哪些操作必须保留人工审批？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "线上发生大范围服务不可用，你作为值班负责人，第一优先级是什么？如何组织止血与通报？"},
+    ],
+    "测试": [
+        {"skill_name": "测试基础", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "拿到一个需求，你如何设计测试用例？请说明等价类、边界值、场景法等方法的运用。"},
+        {"skill_name": "自动化", "stage": "深度探究", "difficulty": "HARD",
+         "question": "如何设计一套稳定的 UI/接口自动化测试框架？面对用例易碎（flaky）问题你会怎么治理？"},
+        {"skill_name": "缺陷分析", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "线上漏测了一个严重 Bug，你会如何做根因分析并改进测试流程？"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "讲一个你负责的质量保障项目：测试策略、自动化覆盖率、缺陷逃逸率等指标如何改善？"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "开发说某个问题“不是 Bug 是特性”，你如何判断并处理这类分歧？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "版本明天上线但还有关键用例未测完，你如何在质量与进度之间权衡并向上反馈？"},
+    ],
+    "产品": [
+        {"skill_name": "需求优先级", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "多个业务方同时提需求而研发资源有限，你如何决定优先级？请介绍你用过的框架（RICE/KANO）及一次真实取舍。"},
+        {"skill_name": "数据驱动", "stage": "深度探究", "difficulty": "HARD",
+         "question": "某功能上线一周核心指标不升反降，你如何排查并做出继续/回滚的决策？"},
+        {"skill_name": "用户洞察", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "你如何判断一个用户反馈的需求是真痛点还是伪需求？请说明你的验证方法。"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "讲一个你主导的产品从 0 到 1：如何定义目标用户、验证需求、衡量上线后的业务结果？"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "研发认为你的需求技术上不合理并拒绝推进，你会怎么处理？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "老板拍板一个你强烈不认同的需求并要求立即上线，你如何应对？"},
+    ],
+    "运营": [
+        {"skill_name": "用户分层", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "请介绍你常用的用户分层/分群方法，以及针对不同层级如何设计差异化运营策略。"},
+        {"skill_name": "增长实验", "stage": "深度探究", "difficulty": "HARD",
+         "question": "设计一个提升新用户次日留存的方案，并说明你如何用对照实验验证它真的有效。"},
+        {"skill_name": "活动复盘", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "一场线上活动 ROI 不达预期，你会如何从漏斗与成本结构复盘并改进？"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "讲一个你操盘过的运营项目：目标、策略、关键动作，以及可量化的业务结果。"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "如何衡量私域社群的真实价值，而不是只看群数量？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "你策划的活动上线即被用户大量投诉，运营群炸锅，你的前 30 分钟做什么？"},
+    ],
+    "销售": [
+        {"skill_name": "销售漏斗", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "请描述你从线索到成交的完整打法，你如何管理销售漏斗与各阶段转化率？"},
+        {"skill_name": "异议处理", "stage": "深度探究", "difficulty": "HARD",
+         "question": "客户说“你们价格太贵了”，你会如何探询真实异议并重构价值，而不是直接降价？"},
+        {"skill_name": "客户开发", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "面对一个全新行业/区域市场，你如何从 0 开拓客户并建立管道？"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "讲一个你拿下的最难客户：决策链、竞争格局、你的关键动作与最终业绩。"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "如何判断一个商机是否值得投入精力？你会用哪些标准筛选线索？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "连续两个月没完成业绩指标，主管开始质疑你，你会怎么做？"},
+    ],
+    "人力": [
+        {"skill_name": "招聘效能", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "如何提升一个难招岗位的招聘达成率与招聘质量？请从画像、渠道、流程效率说明。"},
+        {"skill_name": "绩效体系", "stage": "深度探究", "difficulty": "HARD",
+         "question": "KPI 与 OKR 有什么本质区别？在什么样的组织情境下你会推荐哪一种？"},
+        {"skill_name": "员工关系", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "公司要优化一名绩效不达标的员工，作为 HR 你如何合规且妥善地处理？"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "讲一个你主导的 HR 项目（如招聘攻坚、体系搭建、文化落地）：目标、做法与量化成效。"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "用人部门提了一个你认为不合理的招聘要求，你如何沟通与引导？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "多个部门同时催招聘且都说是最高优先级，资源有限你如何应对？"},
+    ],
+    "财务": [
+        {"skill_name": "财务报表", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "三大财务报表的关系是什么？为什么一家公司利润为正却可能出现资金链断裂？"},
+        {"skill_name": "成本分析", "stage": "深度探究", "difficulty": "HARD",
+         "question": "你如何分析一个产品的盈利能力并给出定价建议？请结合单位经济模型与盈亏平衡说明。"},
+        {"skill_name": "内控审计", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "如果发现某部门存在费用报销舞弊迹象，你会如何调查与处置？"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "讲一个你参与的财务分析/预算/降本增效项目：你做了什么，带来了多少可量化的价值？"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "业务部门抱怨财务流程太慢影响效率，你如何在合规与效率之间平衡？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "临近结账发现一处较大金额差错且原因未明，管理层在催报表，你如何处理？"},
+    ],
+    "市场品牌": [
+        {"skill_name": "品牌定位", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "为一个新消费品牌做定位你会怎么做？你如何衡量定位是否成功？"},
+        {"skill_name": "投放增长", "stage": "深度探究", "difficulty": "HARD",
+         "question": "预算有限时，你如何在多渠道投放中分配预算并用增量实验持续优化 ROI？"},
+        {"skill_name": "内容营销", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "如何策划一次能带来有效销售线索的内容营销活动，而不只是刷阅读量？"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "讲一个你主导的市场/品牌 campaign：目标、创意、渠道组合与可量化的效果。"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "如何区分品牌广告的长期价值与效果广告的短期转化，你会如何向老板解释预算分配？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "品牌突然在社交媒体遭遇负面舆情，你会如何应对？"},
+    ],
+    "设计": [
+        {"skill_name": "设计流程", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "请介绍你完成一个产品设计需求的完整流程与方法论（如何发现问题、验证方案）。"},
+        {"skill_name": "设计决策", "stage": "深度探究", "difficulty": "HARD",
+         "question": "当业务目标（如强曝光广告位）与用户体验冲突时，你如何取舍并用证据推动决策？"},
+        {"skill_name": "设计系统", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "为什么要建设计系统？你会如何推动它在团队真正落地而非沦为摆设？"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "讲一个你通过优化交互/视觉细节显著提升转化或体验的案例，用数据说明结果。"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "你如何评估自己的设计是否“好”？会用哪些标准或数据？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "你的设计方案被业务方当众否定并要求大改，你如何应对？"},
+    ],
+    "客户成功": [
+        {"skill_name": "客户健康度", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "如何构建客户健康度评分体系，提前识别流失风险？"},
+        {"skill_name": "续约增购", "stage": "深度探究", "difficulty": "HARD",
+         "question": "如何提升 SaaS 客户的续费率，并在合适的时机创造增购机会？"},
+        {"skill_name": "客户挽留", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "一个重要客户因产品问题非常不满并提出解约，你会如何处理？"},
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "讲一个你成功挽回或深度服务并带来增购的客户案例：你的关键动作与结果。"},
+        {"skill_name": "综合素养", "stage": "综合素养", "difficulty": "EASY",
+         "question": "如何设计新客户的 onboarding 流程，让客户尽快获得价值（缩短 time to value）？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "客户在大群里公开投诉你负责的账户，措辞很难听，你的前 30 分钟做什么？"},
+    ],
+    # 兜底：识别不出具体大类时使用的通用职业题（行业无关）
+    "通用": [
+        {"skill_name": "项目经验", "stage": "项目深挖", "difficulty": "MEDIUM",
+         "question": "请挑选你简历中印象最深的一段经历，讲讲你的角色、遇到的最大困难、解决思路与量化成果。"},
+        {"skill_name": "岗位理解", "stage": "专业基础", "difficulty": "MEDIUM",
+         "question": "谈谈你对应聘岗位核心职责的理解，以及你认为胜任这个岗位最关键的三项能力是什么？"},
+        {"skill_name": "学习能力", "stage": "综合素养", "difficulty": "EASY",
+         "question": "举例说明你如何在短时间内掌握一门新知识/新技能并应用到实际工作中？"},
+        {"skill_name": "协作沟通", "stage": "综合素养", "difficulty": "MEDIUM",
+         "question": "描述一次你需要跨部门协作才能完成的任务，你如何推动并处理分歧？"},
+        {"skill_name": "职业规划", "stage": "综合素养", "difficulty": "EASY",
+         "question": "未来两三年你的职业目标是什么？你打算如何补齐现状与目标之间的差距？"},
+        {"skill_name": "抗压能力", "stage": "压力应对", "difficulty": "HARD",
+         "question": "你负责的一项工作临近截止却出现重大返工，你如何在压力下调整并交付？"},
+    ],
+}
+
+
+def detect_job_category(job_title: str) -> str:
+    """根据岗位标题/描述关键词识别大类，命中优先级按 _JOB_CATEGORY_KEYWORDS 顺序。"""
+    t = (job_title or "").lower()
+    for category, keywords in _JOB_CATEGORY_KEYWORDS:
+        if any(k in t for k in keywords):
+            return category
+    return "通用"
+
+
+# 技术类大类（雷达用"系统设计"）；其余大类为非技术（雷达用"业务理解"）
+_TECH_CATEGORIES = {"后端", "前端", "客户端", "人工智能", "大数据", "运维安全", "测试"}
+
+
+def is_technical_role(job_title: str) -> bool:
+    """岗位是否属于技术类：驱动报告雷达维度命名与反馈文案的自适应。"""
+    return detect_job_category(job_title) in _TECH_CATEGORIES
+
+
+def report_dimension_names(job_title: str) -> List[str]:
+    """按岗位类型返回五维雷达维度名（非技术岗用"业务理解"替代"系统设计"）。"""
+    if is_technical_role(job_title):
+        return ["专业基础", "项目经验", "系统设计", "沟通表达", "综合素质"]
+    return ["专业基础", "项目经验", "业务理解", "沟通表达", "综合素质"]
+
+
+def _report_wording(job_title: str) -> Dict[str, str]:
+    """报告反馈文案的技术/非技术措辞集。"""
+    if is_technical_role(job_title):
+        return {
+            "core_label": "技术",
+            "high_extra": "极端异常场景的容灾方案可进一步细化",
+            "high_sugg": "面试时主动对比不同技术方案的优劣取舍，展现架构选型思考；补充线上故障排查案例，真实踩坑经验比理论方案更有说服力",
+            "mid_weak": "回答偏向工具/流程的表面使用，对底层原理与边界条件探讨较浅",
+            "mid_sugg": "建议深入学习本岗位核心知识的底层原理，不要只停留在操作层面",
+            "low_sugg": "建议从最基础的概念开始学习，先建立完整的知识框架",
+            "summary_hi": "在核心技术栈上有较深入的理解。建议继续深化高并发与分布式架构的实战经验。",
+            "summary_mid": "对岗位所需专业知识有基本了解，但深度和广度都有明显提升空间。",
+            "summary_low": "对岗位涉及的专业知识了解较少，建议系统性地复习基础知识并加强实战练习。",
+        }
+    return {
+        "core_label": "专业",
+        "high_extra": "对行业趋势与业务全局的思考可进一步展开",
+        "high_sugg": "面试时主动展示数据化成果与跨部门协作案例，体现方法论沉淀；用 STAR 结构量化每项工作的业务影响",
+        "mid_weak": "回答偏向日常流程的表面描述，缺少方法论沉淀与量化成果",
+        "mid_sugg": "建议深入学习本岗位的核心方法论与行业知识，不要只停留在执行层面",
+        "low_sugg": "建议从岗位的基础知识与行业常识开始学习，先建立完整的业务认知框架",
+        "summary_hi": "对本岗位所需的专业能力有较扎实的理解。建议继续深化行业认知与方法论沉淀。",
+        "summary_mid": "对岗位所需的专业知识有基本了解，但深度和广度都有明显提升空间。",
+        "summary_low": "对岗位涉及的专业知识了解较少，建议系统性地学习基础知识并加强实践。",
+    }
+
+
+def _pick_category_question(category: str, seq: int, used_texts=None, prefer_difficulty: str = None) -> Dict[str, Any]:
+    """从指定大类出题池选一道题：优先避开已用题干，其次按 seq 轮转，可选难度偏好优先。"""
+    pool = MOCK_QUESTION_BANK_BY_CATEGORY.get(category) or MOCK_QUESTION_BANK_BY_CATEGORY["通用"]
+    used = set(used_texts or [])
+    fresh = [q for q in pool if q["question"] not in used]
+    candidates = fresh or pool
+    if prefer_difficulty:
+        matched = [q for q in candidates if q["difficulty"] == prefer_difficulty]
+        if matched:
+            candidates = matched
+    return dict(candidates[(max(1, seq) - 1) % len(candidates)])
+
 
 def generate_mock_evaluation(question_text: str, answer_text: str, seq: int) -> Dict[str, Any]:
     ans = (answer_text or "").strip()
@@ -304,129 +606,45 @@ def generate_mock_evaluation(question_text: str, answer_text: str, seq: int) -> 
     }
 
 def generate_adaptive_mock_question(
-    job_title: str, seq: int = 1, last_question: str = None, last_answer: str = None, last_score: float = None
+    job_title: str, seq: int = 1, last_question: str = None, last_answer: str = None,
+    last_score: float = None, used_texts: List[str] = None
 ) -> Dict[str, Any]:
+    """按岗位大类选题的 Mock 出题引擎。
+
+    先识别 job_title 所属大类（技术/非技术均覆盖），再从对应出题池取题：
+    - 首题（seq==1）：取该大类基础题；
+    - 答得差（消极/过短/低分）：降难取 EASY 题（基础诊断）；
+    - 答得好（高分/有深度）：升难取 HARD 题（深度探究）；
+    - 其余：按 seq 轮转取下一道题。
+    始终优先避开本场已用题干。
+    """
+    category = detect_job_category(job_title)
+    used = list(used_texts or [])
+    if last_question:
+        used.append(last_question)
+
+    def pick(prefer_difficulty=None):
+        q = dict(_pick_category_question(category, seq, used_texts=used, prefer_difficulty=prefer_difficulty))
+        q["hints"] = q.get("hints") or "回答时请结合真实经历，先给结论再分点展开，尽量给出可量化的结果"
+        return q
+
     if seq == 1 or not last_question or not last_answer:
-        return {
-            "question": "请详细介绍一下在你的高并发项目中，如何利用 Redis 优化系统性能？在高并发读写下又是如何保障缓存与数据库一致性的？",
-            "skill_name": "Redis缓存架构",
-            "stage": "专业基础",
-            "difficulty": "MEDIUM",
-            "hints": "回答时请阐明核心原理，并结合实际项目取舍进行展开说明"
-        }
+        return pick(prefer_difficulty="MEDIUM")
 
     ans = (last_answer or "").strip()
-    ans_lower = ans.lower()
     negative_patterns = ["不知道", "没用过", "随便", "不会", "不懂", "不清楚", "没接触过", "跳过", "没做过"]
     is_negative = any(p in ans for p in negative_patterns)
-    is_very_short = len(ans) < 12
-    is_poor = is_negative or (is_very_short and not any(k in ans_lower for k in ["redis", "mysql", "lock", "锁", "java"])) or (last_score is not None and last_score < 65)
-
-    lq = last_question or ""
+    is_poor = is_negative or len(ans) < 12 or (last_score is not None and last_score < 65)
+    is_strong = (last_score is not None and last_score >= 80) or len(ans) >= 150
 
     if is_poor:
-        if "redis" in lq.lower() or "缓存" in lq:
-            return {
-                "question": "注意到上一题你对高并发缓存与数据一致性方案不太熟悉，那么我们从基础切入：请简述 Redis 常见的 5 种基本数据结构（String、List、Hash、Set、ZSet）各自的底层特点与典型应用场景？在日常项目中你最常用哪一种？",
-                "skill_name": "Redis核心基础",
-                "stage": "基础诊断",
-                "difficulty": "EASY",
-                "hints": "可以挑选你最熟悉的一到两种数据结构，结合具体业务需求（如计数器、会话共享）展开说明"
-            }
-        elif "volatile" in lq or "并发" in lq or "线程" in lq:
-            return {
-                "question": "既然对底层的内存屏障机制不太熟悉，我们换个基础角度：请说说 Java 中创建多线程的几种方式？以及在生产环境中为什么阿里规约明确禁止使用 Executors 直接创建线程池？",
-                "skill_name": "Java多线程基础",
-                "stage": "基础诊断",
-                "difficulty": "EASY",
-                "hints": "重点说明固定线程池与可缓存线程池可能引发的 OOM 隐患及 ThreadPoolExecutor 的核心参数"
-            }
-        elif "索引" in lq or "mysql" in lq.lower():
-            return {
-                "question": "我们回到数据库基础：在日常编写 SQL 查询时，你通常使用什么工具（如 EXPLAIN）来分析慢 SQL？其中哪些关键指标（如 type、key、rows）最能直接反映索引命中情况？",
-                "skill_name": "MySQL慢查分析基础",
-                "stage": "基础诊断",
-                "difficulty": "EASY",
-                "hints": "结合具体日常排查经验说明 EXPLAIN 执行计划中的常见字段含义"
-            }
-        else:
-            return {
-                "question": "我们换个更贴近日常业务开发的角度：在你的实际项目开发中，最常处理的业务场景是什么？在实现核心业务接口时，你通常遵循怎样的分层规范（Controller-Service-DAO）与统一异常拦截？",
-                "skill_name": "工程规范与业务开发",
-                "stage": "基础素养",
-                "difficulty": "EASY",
-                "hints": "结合日常代码规范与实战项目进行说明"
-            }
-
-    # If answer is deep / technical
-    if any(k in ans_lower for k in ["canal", "binlog", "双删", "延迟双删", "最终一致性", "分布式锁", "redlock"]) or (last_score is not None and last_score >= 80 and "redis" in lq.lower()):
-        return {
-            "question": "针对你在上题中提到的 Canal 监听 Binlog 延迟双删方案，在极端网络抖动或 Binlog 消费延迟时，如何处理脏读时间窗口？如果在高吞吐场景下数据库发生主从同步延迟，双删的延迟时间该如何科学动态评估？能否结合分布式锁或版本号机制进行深度展开？",
-            "skill_name": "Redis高并发架构与容灾",
-            "stage": "深度探究",
-            "difficulty": "HARD",
-            "hints": "建议结合主从延迟监控、MQ 削峰重试与降级兜底方案深入分析"
-        }
-
-    if any(k in ans_lower for k in ["击穿", "穿透", "雪崩", "布隆过滤器", "互斥锁", "逻辑过期"]):
-        return {
-            "question": "你在刚才的回答中准确提到了防范策略。如果系统面对数十万级瞬时突发流量，互斥锁方案可能导致大量请求线程阻塞在后台，你如何通过逻辑过期配合异步刷新或者多级缓存（本地 Caffeine + 远程 Redis）进一步压降单节点延迟？",
-            "skill_name": "多级缓存架构设计",
-            "stage": "系统设计",
-            "difficulty": "HARD",
-            "hints": "结合缓存击穿与本地缓存一致性广播机制展开说明"
-        }
-
-    if any(k in ans_lower for k in ["volatile", "aqs", "cas", "synchronized", "内存屏障", "happens-before"]):
-        return {
-            "question": "既然对底层内存可见性有深入理解，请进一步谈谈 JMM 内存模型中的 Happens-Before 原则？在 AQS（AbstractQueuedSynchronizer）的设计中，又是如何利用 CAS 与 volatile state 巧妙实现独占锁与共享锁同步状态流转的？",
-            "skill_name": "JMM与AQS底层架构",
-            "stage": "源码深度探究",
-            "difficulty": "HARD",
-            "hints": "可结合 ReentrantLock 或 Semaphore 内部 Sync 实现进行剖析"
-        }
-
-    if any(k in ans_lower for k in ["b+树", "聚簇", "非聚簇", "自增", "回表", "覆盖索引"]):
-        return {
-            "question": "你对 InnoDB 聚簇索引的组织形式理解很扎实。请进一步分析：在亿级数据量的大表历史归档或深分页（如 LIMIT 10000000, 20）场景下，B+ 树多次回表会造成极高磁盘 I/O，你会采取哪些具体的架构级重构（如子查询延迟关联、基于自增游标或搜索引擎分流）进行彻底根治？",
-            "skill_name": "海量数据深分页与存储优化",
-            "stage": "高并发海量存储",
-            "difficulty": "HARD",
-            "hints": "对比延迟关联索引覆盖与基于业务时间游标的方案优劣"
-        }
-
-    if seq == 2:
-        return {
-            "question": "请结合底层源码或内存屏障，聊聊 Java 中 volatile 关键字的作用原理？它能保证线程安全原子性吗，为什么？",
-            "skill_name": "Java并发",
-            "stage": "专业基础",
-            "difficulty": "MEDIUM",
-            "hints": "从可见性、有序性及 CPU 指令重排角度切入分析"
-        }
-    elif seq == 3:
-        return {
-            "question": "在 MySQL InnoDB 中，聚集索引与非聚集索引的底层组织方式有什么区别？为什么我们通常建议使用自增主键？",
-            "skill_name": "MySQL",
-            "stage": "专业基础",
-            "difficulty": "MEDIUM",
-            "hints": "结合 B+ 树页分裂与聚集索引叶子节点结构说明"
-        }
-    elif seq == 4:
-        return {
-            "question": "请挑选你简历中印象最深的一个项目，详细讲讲你在其中负责的核心模块设计、遇到的最棘手技术难题以及最终的解决思路和量化收益。",
-            "skill_name": "项目经验",
-            "stage": "项目深挖",
-            "difficulty": "MEDIUM",
-            "hints": "建议按照 STAR 法则（情境、任务、行动、结果）进行阐述"
-        }
-    else:
-        return {
-            "question": "如果让你设计一个能够支撑千万级日活的分布式全局唯一发号器（如雪花算法或号段模式），你会如何设计并规避时钟回拨与单点瓶颈？",
-            "skill_name": "系统设计",
-            "stage": "系统设计",
-            "difficulty": "HARD",
-            "hints": "从算法位分布、WorkerID 分配、时钟同步容错等关键维度分析"
-        }
+        q = pick(prefer_difficulty="EASY")
+        if q["stage"] not in ("综合素养", "压力应对"):
+            q["stage"] = "基础诊断"
+        return q
+    if is_strong:
+        return pick(prefer_difficulty="HARD")
+    return pick()
 
 def generate_mock_report(interview_id: int, total_questions: int, scores: List[float] = None,
                          qa_pairs: List[Dict[str, Any]] = None, job_title: str = None) -> Dict[str, Any]:
@@ -448,75 +666,72 @@ def generate_mock_report(interview_id: int, total_questions: int, scores: List[f
     else:
         perf = "基础薄弱"
 
-    # 根据平均分波动生成维度分（围绕平均分±5分，保持真实感）
+    # 雷达维度名按岗位类型自适应：非技术岗用"业务理解"替代"系统设计"
+    dim_names = report_dimension_names(job_title or "")
+    w = _report_wording(job_title or "")
+    jitter = [(-4, 4), (-5, 5), (-6, 4), (-3, 5), (-4, 4)]
     dim_scores = {
-        "专业基础": round(max(20, min(98, avg_score + random.uniform(-4, 4))), 1),
-        "项目经验": round(max(20, min(98, avg_score + random.uniform(-5, 5))), 1),
-        "系统设计": round(max(20, min(98, avg_score + random.uniform(-6, 4))), 1),
-        "沟通表达": round(max(20, min(98, avg_score + random.uniform(-3, 5))), 1),
-        "综合素质": round(max(20, min(98, avg_score + random.uniform(-4, 4))), 1),
+        name: round(max(20, min(98, avg_score + random.uniform(lo, hi))), 1)
+        for name, (lo, hi) in zip(dim_names, jitter)
     }
 
-    # 根据分数分档生成反馈内容
+    # 根据分数分档生成反馈内容（措辞随岗位类型切换）
     if avg_score >= 80:
         strengths = [
-            "技术基础扎实：核心概念理解准确，能结合实际项目场景展开说明",
+            f"{w['core_label']}基础扎实：核心概念理解准确，能结合实际项目场景展开说明",
             "回答逻辑清晰：分点阐述有条理，能主动说明方案的取舍与边界",
-            "具备工程思维：不仅讲原理，还能联系生产环境中的实际问题"
+            "具备全局思维：不仅讲做法，还能联系真实业务场景中的实际问题"
         ]
         weaknesses = [
-            "极端异常场景的容灾方案可进一步细化",
-            "量化数据（如压测指标、性能提升幅度）可更具体"
+            w["high_extra"],
+            "量化数据（如业务指标、提升幅度）可更具体"
         ]
-        suggestions = [
-            "面试时主动对比不同技术方案的优劣，展现技术选型思考",
-            "补充线上故障排查案例，真实踩坑经验比理论方案更有说服力"
-        ]
-        summary = f"综合评分 {avg_score} 分，整体表现优异。技术基础扎实，具备较好的工程实践能力与系统思维，在核心技术栈上有较深入的理解。建议继续深化高并发与分布式架构的实战经验。"
+        suggestions = [w["high_sugg"]]
+        summary = f"综合评分 {avg_score} 分，整体表现优异。{w['summary_hi']}"
 
     elif avg_score >= 65:
         strengths = [
-            "对核心技术概念有基本认知，能回答出主要要点",
+            f"对核心{w['core_label']}概念有基本认知，能回答出主要要点",
             "回答围绕题目展开，相关性较好"
         ]
         weaknesses = [
-            "回答偏向基础用法，对底层原理与边界条件探讨较浅",
+            w["mid_weak"],
             "缺少项目实战案例与量化数据支撑"
         ]
         suggestions = [
-            "建议深入学习核心技术的底层实现原理，不要只停留在 API 使用层面",
+            w["mid_sugg"],
             "用 STAR 法则组织回答：情境-任务-行动-结果，增强说服力"
         ]
-        summary = f"综合评分 {avg_score} 分，整体表现中等。对岗位所需技术有基本了解，但深度和广度都有明显提升空间。建议针对薄弱环节进行系统性补强。"
+        summary = f"综合评分 {avg_score} 分，整体表现中等。{w['summary_mid']}建议针对薄弱环节进行系统性补强。"
 
     elif avg_score >= 50:
         strengths = [
             "基本理解题意，能给出部分相关回答"
         ]
         weaknesses = [
-            "回答内容较浅，缺乏技术细节与原理说明",
+            f"回答内容较浅，缺乏{w['core_label']}细节与原理说明",
             "结构不够清晰，知识点覆盖不全"
         ]
         suggestions = [
             "先夯实基础概念，再深入进阶内容，循序渐进",
             "多做模拟面试练习，提升临场组织语言的能力"
         ]
-        summary = f"综合评分 {avg_score} 分，基础有待加强。对题目涉及的技术点理解不够深入，需要系统性地复习基础知识并加强实战练习。"
+        summary = f"综合评分 {avg_score} 分，基础有待加强。{w['summary_low']}"
 
     else:
         strengths = [
             "态度认真，能尝试回答问题"
         ]
         weaknesses = [
-            "对题目考察的核心技术点缺乏基本认知",
+            f"对题目考察的核心{w['core_label']}点缺乏基本认知",
             "回答内容过于简略，未能展开说明"
         ]
         suggestions = [
-            "建议从最基础的概念开始学习，先建立完整的知识框架",
+            w["low_sugg"],
             "面试中遇到不会的问题，可以先说明已知的相关背景，展现思考过程",
-            "推荐：针对目标岗位的核心技术栈，制定分阶段学习计划"
+            f"推荐：针对目标岗位的核心要求，制定分阶段学习计划"
         ]
-        summary = f"综合评分 {avg_score} 分，目前基础较薄弱。对题目涉及的技术点了解较少，建议从基础知识开始系统学习，多结合项目实践加深理解。"
+        summary = f"综合评分 {avg_score} 分，目前基础较薄弱。{w['summary_low']}"
 
     return {
         "total_score": avg_score,

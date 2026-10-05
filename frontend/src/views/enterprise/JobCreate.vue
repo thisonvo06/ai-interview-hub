@@ -42,6 +42,16 @@
             </el-row>
 
             <el-row :gutter="16">
+              <el-col :span="14">
+                <el-form-item label="岗位大类" prop="category">
+                  <el-select v-model="form.category" placeholder="选择岗位大类（决定模拟面试组卷方向）" style="width: 100%;">
+                    <el-option v-for="c in jobCategories" :key="c" :label="c" :value="c" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+            </el-row>
+
+            <el-row :gutter="16">
               <el-col :span="8">
                 <el-form-item label="工作城市" prop="city">
                   <el-input v-model="form.city" placeholder="如：深圳" />
@@ -246,6 +256,7 @@ const form = reactive({
   title: '',
   official_apply_url: '',
   department_id: null as number | null,
+  category: '后端开发',
   city: '深圳',
   salary_min: 20,
   salary_max: 35,
@@ -264,6 +275,13 @@ const form = reactive({
     learning: 10
   }
 })
+
+// 岗位大类选项：与后端题库 job_category 对齐，保证组卷能命中专业题
+const jobCategories = [
+  '后端开发', '前端开发', '全栈研发', '人工智能', '大数据', '系统运维', '运维架构',
+  '质量保障', '客户端', '系统底层', '信息安全',
+  '产品经理', '用户运营', '销售商务', '人力资源', '财务审计', '市场品牌', '交互视觉设计', '客户成功'
+]
 
 const rules = {
   title: [{ required: true, message: '请输入职位名称', trigger: 'blur' }],
@@ -318,6 +336,7 @@ const handleRunJDParse = async () => {
     const res: any = await enterpriseApi.parseJD(rawJDText.value)
     if (res) {
       if (res.title) form.title = res.title
+      if (res.category && jobCategories.includes(res.category)) form.category = res.category
       if (res.city) form.city = res.city
       if (res.salary_min) form.salary_min = res.salary_min
       if (res.salary_max) form.salary_max = res.salary_max
@@ -363,6 +382,7 @@ const handleSave = async (statusTarget: 'DRAFT' | 'PENDING_REVIEW') => {
         title: form.title,
         official_apply_url: form.official_apply_url || null,
         department_id: form.department_id || null,
+        category: form.category,
         city: form.city,
         salary_min: form.salary_min,
         salary_max: form.salary_max,
@@ -414,6 +434,7 @@ onMounted(async () => {
         form.title = res.title || ''
         form.official_apply_url = res.official_apply_url || ''
         form.department_id = res.department_id || null
+        if (res.category) form.category = res.category
         form.city = res.city || ''
         form.salary_min = res.salary_min || 15
         form.salary_max = res.salary_max || 30

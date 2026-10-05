@@ -413,7 +413,8 @@ async def submit_answer_core(db: Session, interview: Interview, user: User, text
             with ai_context(user.id, interview.id, request_id):
                 missing_data = await ai_provider.generate_question(job_title=interview.job.title if interview.job else "综合岗位",
                     seq=curr_q.seq + 1, difficulty=interview.difficulty, last_question=curr_q.text,
-                    last_answer=text, last_score=eval_res["score"], jd_text=jd_text or None)
+                    last_answer=text, last_score=eval_res["score"], jd_text=jd_text or None,
+                    used_texts=[q.text for q in interview.questions])
         db.expire_all()
         db.refresh(interview)
         if interview.processing_token != lease or interview.status != "IN_PROGRESS":

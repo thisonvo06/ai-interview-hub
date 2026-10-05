@@ -104,6 +104,21 @@ class SystemSetting(Base):
     value = Column(Text, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
+class UserAISetting(Base):
+    """用户级 AI 服务配置（每人独立一份，优先级高于全局配置）。
+
+    普通用户可填写自己的 API Key / Base URL / 模型，仅影响自身的 AI 调用；
+    未配置（无记录）时回退到全局 SystemSetting 配置。
+    """
+    __tablename__ = "user_ai_settings"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    mode = Column(String(20), nullable=True)
+    base_url = Column(String(255), nullable=True)
+    api_key = Column(Text, nullable=True)
+    model = Column(String(100), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
 class AICallLog(Base):
     __tablename__ = "ai_call_logs"
 

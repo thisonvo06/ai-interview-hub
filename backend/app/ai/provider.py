@@ -10,7 +10,7 @@ from app.ai.schemas import (
     MatchExplainerSchema, ResumeOptimizeSchema, ResumeRewriteSchema
 )
 from app.ai.mock_data import (
-    MOCK_RESUME_PARSED, MOCK_JD_PARSED, INTERVIEW_QUESTION_POOL,
+    MOCK_RESUME_PARSED, MOCK_JD_PARSED,
     generate_mock_evaluation, generate_adaptive_mock_question,
     generate_mock_report, generate_mock_learning_tasks
 )
@@ -50,12 +50,17 @@ def _log_ai_call(business_type: str, model: str, tokens_in: int, tokens_out: int
 
 class AIProvider:
     def _current_config(self) -> Dict[str, Any]:
-        """每次调用时读取生效配置（DB 覆盖 .env，带缓存，保存即生效）。"""
+        """每次调用时读取生效配置（DB 覆盖 .env，带缓存，保存即生效）。
+
+        按当前请求上下文中的用户解析：用户若配置了个人 AI Key，则优先使用其
+        个人配置，仅影响自身调用；否则回退到全局配置。
+        """
         from app.core.database import SessionLocal
-        from app.services.ai_settings import get_effective_config
+        from app.services.ai_settings import get_user_effective_config
+        user_id = (call_context.get() or {}).get("user_id")
         db = SessionLocal()
         try:
-            return get_effective_config(db)
+            return get_user_effective_config(db, user_id)
         finally:
             db.close()
 
@@ -138,7 +143,20 @@ class AIProvider:
     @traced
     async def parse_jd(self, jd_text: str) -> Dict[str, Any]:
         """Parses enterprise JD text into job fields and skill requirements."""
-        prompt = f"Parse this Job Description into JSON:\n{jd_text}"
+        prompt = (
+            "Parse this Job Description into JSON.\n"
+            "The 'category' field MUST be exactly one of these job families (岗位大类), "
+            "choose the closest match to the role:\n"
+            "后端开发, 前端开发, 全栈研发, 人工智能, 大数据, 系统运维, 运维架构, "
+            "质量保障, 客户端, 系统底层, 信息安全, 产品经理, 用户运营, 销售商务, "
+            "人力资源, 财务审计, 市场品牌, 交互视觉设计, 客户成功.\n"
+            "If the role does not fit any technical family, pick the nearest non-technical one; "
+            "never invent a new category string.\n"
+            "The 'competencies' list must fit the role type: for technical roles use names like "
+            "专业基础/项目经验/系统设计/沟通表达/综合素质; for NON-technical roles replace 系统设计 with 业务理解 "
+            "(business/process understanding) and keep the rest role-neutral. Weights must sum to 100.\n\n"
+            f"=== JD ===\n{jd_text}"
+        )
         real_res = await self._call_llm_json(prompt, JDParseSchema, "JD_PARSE")
         if real_res:
             return real_res
@@ -157,7 +175,8 @@ class AIProvider:
         last_score: float = None,
         jd_text: str = None,
         resume_context: str = None,
-        question_type: str = None
+        question_type: str = None,
+        used_texts: List[str] = None
     ) -> Dict[str, Any]:
         """Dynamically generates interview question based on JD, resume and candidate's previous response."""
         type_hint = ""
@@ -196,7 +215,8 @@ class AIProvider:
             seq=seq,
             last_question=last_question,
             last_answer=last_answer,
-            last_score=last_score
+            last_score=last_score,
+            used_texts=used_texts
         )
         if question_type:
             raw_q["question_type"] = question_type
@@ -257,22 +277,30 @@ class AIProvider:
     ) -> Dict[str, Any]:
         """Generates comprehensive interview post-review report with radar scores."""
         if qa_pairs:
+            from app.ai.mock_data import report_dimension_names, is_technical_role
+            dims = "、".join(report_dimension_names(job_title or ""))
+            role_hint = (
+                "a technical role (use engineering-grounded examples)"
+                if is_technical_role(job_title or "")
+                else "a NON-technical role (use business/process/communication-grounded examples; never assume software engineering context)"
+            )
             transcript = "\n".join(
                 f"Q{item.get('seq')}: {item.get('question')}\nA: {item.get('answer')}\nScore: {item.get('score')}"
                 for item in qa_pairs
             )
             prompt = (
-                f"You are a senior interview coach writing a post-interview review report for '{job_title or '技术岗位'}'.\n"
+                f"You are a senior interview coach writing a post-interview review report for '{job_title or '综合岗位'}' — {role_hint}.\n"
                 f"Here is the full transcript with per-question scores:\n{transcript[:4000]}\n\n"
-                "Output JSON with keys: total_score (0-100 float), performance_level (中文), "
-                "dimension_scores (dict of 专业基础, 项目经验, 系统设计, 沟通表达, 综合素质 -> float), "
+                "All feedback text must be in 中文 and grounded in the actual Q&A above.\n"
+                f"Output JSON with keys: total_score (0-100 float), performance_level (中文), "
+                f"dimension_scores (dict of {dims} -> float), "
                 "strengths (list of 中文 strings), weaknesses (list), suggestions (list), summary (中文 string)."
             )
             real_res = await self._call_llm_json(prompt, ReportGenSchema, "REPORT_GEN")
             if real_res:
                 return real_res
 
-        raw_report = generate_mock_report(interview_id, total_questions, scores)
+        raw_report = generate_mock_report(interview_id, total_questions, scores, job_title=job_title)
         validated = ReportGenSchema(**raw_report)
         return validated.model_dump()
 

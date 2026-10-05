@@ -77,6 +77,11 @@ export const personalApi = {
   revokeConsent: (id: number) => client.delete(`/consents/${id}`),
   getSessions: () => client.get('/security/sessions'),
   revokeSession: (id: string) => client.delete(`/security/sessions/${id}`),
+  getPersonalAIConfig: () => client.get('/personal/ai-config'),
+  updatePersonalAIConfig: (data: any) => client.put('/personal/ai-config', data),
+  resetPersonalAIConfig: () => client.delete('/personal/ai-config'),
+  testPersonalAIConfig: (data: any) => client.post('/personal/ai-config/test', data),
+  getPersonalAIUsage: () => client.get('/personal/ai-usage'),
 }
 
 export const interviewApi = {
