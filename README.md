@@ -18,7 +18,7 @@
 
 ## 🚀 快速开始 — 无需配置，3 分钟跑起来
 
-Windows 可直接**双击 `一键打开.bat`**（或 `start_all.bat`），自动检查依赖、启动前后端，等待服务就绪后打开浏览器。重复打开会复用已运行的服务；双击 `一键关闭.bat` 可停止后台服务。启动日志保存在 `logs/`。首次缺少依赖时会自动联网安装，需要已安装 Python 3 和 Node.js。
+Windows 可直接**双击 `一键打开.bat`**，自动检查依赖、启动前后端，等待服务就绪后打开浏览器。重复打开会复用已运行的服务；双击 `一键关闭.bat` 可停止后台服务。仅调试后端 API 可双击 `start_backend.bat`（直接打开 Swagger）。启动日志保存在 `logs/`。首次缺少依赖时会自动联网安装，需要已安装 Python 3 和 Node.js。
 
 手动安装和启动步骤：
 
@@ -32,7 +32,7 @@ python -m venv .venv
 cd frontend && npm install && cd ..
 
 # 3) 启动
-start_all.bat          # Windows 一键；或手动分别执行下方命令
+一键打开.bat         # Windows 一键；或手动分别执行下方命令
 ```
 
 ```powershell
@@ -205,6 +205,6 @@ ai-interview-hub/
 │       ├── stores/           # Pinia（Token/User/权限）
 │       └── views/            # 全量业务页面（U/E/M/P/A 系列 + AI 配置向导）
 ├── docs/                     # 产品与工程文档
-├── start_all.bat             # Windows 一键启动
+├── 一键打开.bat            # Windows 一键启动（start_backend.bat 仅起后端）
 └── docker-compose.yml        # 生产容器编排
 ```
