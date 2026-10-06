@@ -2,25 +2,14 @@
   <div class="interview-room-page">
     <StateContainer :loading="loading" :error="error" @retry="loadSession">
       <div v-if="session" class="session-wrapper">
-        <!-- Top Status Bar (Appendix A.7 & Mockup 07) -->
+        <!-- Top Status Bar -->
         <header class="room-top-bar">
           <div class="top-left">
             <span class="room-job-badge">{{ session.job_title }}</span>
             <span class="room-seq-indicator">第 {{ session.current_question_seq }} / {{ session.total_questions }} 题</span>
-            <span class="room-stage-pill">{{ currentStage }}</span>
             <span :class="['room-qtype-pill', qtypeClass(currentQuestion?.question_type)]">
               {{ qtypeLabel(currentQuestion?.question_type) }}
             </span>
-          </div>
-
-          <div class="top-center-progress">
-            <el-progress
-              :percentage="Math.round((session.current_question_seq / session.total_questions) * 100)"
-              :stroke-width="6"
-              color="#3B82F6"
-              :show-text="false"
-              class="custom-room-progress"
-            />
           </div>
 
           <div class="top-right-meta">
@@ -30,12 +19,9 @@
             </div>
             <div class="room-timer-pill">
               <el-icon><Clock /></el-icon>
-              <span>剩余时间 <strong>{{ formatTime(remainingSeconds) }}</strong></span>
+              <span>剩余 <strong>{{ formatTime(remainingSeconds) }}</strong></span>
             </div>
-            <el-button type="warning" plain size="small" class="abort-btn" title="快捷键 Esc" @click="handleConfirmAbort">
-              取消面试 (Esc)
-            </el-button>
-            <el-button type="danger" plain size="small" class="abort-btn" @click="handleConfirmFinish">
+            <el-button type="danger" plain size="small" class="abort-btn" @click="endDialogVisible = true">
               结束面试
             </el-button>
           </div>
@@ -45,20 +31,15 @@
         <main class="room-main-stage">
           <!-- Left: AI Interviewer & Highlighted Question -->
           <section class="ai-interviewer-card">
-            <!-- AI Avatar & Pulsing Voice Ring -->
             <div class="ai-avatar-section">
               <div class="ai-avatar-circle">
-                <div class="sound-wave-ring pulse-1"></div>
-                <div class="sound-wave-ring pulse-2"></div>
-                <div class="ai-portrait-inner">
-                  <el-icon :size="42" color="#60A5FA"><UserFilled /></el-icon>
-                </div>
+                <el-icon :size="30" color="#2563EB"><UserFilled /></el-icon>
               </div>
               <div class="ai-meta-info">
-                <span class="ai-chief-title">经纬职引-智面仓 AI 首席面试官</span>
+                <span class="ai-chief-title">智面仓AI面试官</span>
                 <span class="ai-status-indicator">
                   <span class="status-dot-blink"></span>
-                  正在提问与倾听作答
+                  {{ currentStage }}
                 </span>
               </div>
             </div>
@@ -66,10 +47,9 @@
             <!-- Current Big Question Text -->
             <div class="current-question-container">
               <div class="q-skill-badge-row">
-                <span class="q-skill-tag">考察技能：{{ currentQuestion?.skill_name || '综合技术能力' }}</span>
-                <span class="q-diff-tag">{{ currentQuestion?.difficulty || 'MEDIUM' }}</span>
+                <span class="q-skill-tag">{{ currentQuestion?.skill_name || '综合能力' }}</span>
                 <span class="q-source-tag">
-                  {{ currentQuestion?.source === 'QUESTION_BANK' ? '题库精选' : 'AI 实时出题' }}
+                  {{ currentQuestion?.source === 'QUESTION_BANK' ? '题库' : 'AI 出题' }}
                 </span>
               </div>
               <h1 class="question-headline">
@@ -79,7 +59,7 @@
 
             <!-- Question Sub-note / Hint -->
             <div v-if="currentQuestion?.hints" class="question-hint-bar">
-              <el-icon color="#93C5FD"><InfoFilled /></el-icon>
+              <el-icon color="#3B82F6"><InfoFilled /></el-icon>
               <span>{{ currentQuestion.hints }}</span>
             </div>
           </section>
@@ -92,37 +72,36 @@
                 <video ref="videoRef" autoplay muted playsinline class="candidate-video-elem"></video>
                 <div class="video-status-overlay">
                   <span class="video-status-dot"></span>
-                  候选人音视频通道正常
+                  摄像头已开启
                 </div>
               </div>
               <div v-else class="video-stream-fallback">
                 <div class="fallback-cam-icon">
                   <el-icon :size="36" color="#94A3B8"><VideoCamera /></el-icon>
                 </div>
-                <span class="fallback-cam-text">视频摄像头已关闭，已转为纯文本沉浸模式</span>
+                <span class="fallback-cam-text">摄像头已关闭，纯文本作答模式</span>
               </div>
             </div>
 
             <!-- Answer Transcription / Editor Box -->
             <div class="answer-box">
               <div class="answer-box-header">
-                <span class="answer-box-title">你的回答 (支持直接语音转写或键盘输入)：</span>
+                <span class="answer-box-title">你的回答</span>
                 <span class="word-counter">{{ answerText.length }} 字</span>
               </div>
 
               <el-input
                 v-model="answerText"
                 type="textarea"
-                :rows="5"
-                placeholder="请在此清晰阐述你的解决思路、底层技术选型取舍与项目实操指标..."
+                :rows="6"
+                placeholder="清晰阐述你的解决思路、技术选型取舍与项目实操指标..."
                 class="room-textarea"
               />
 
               <!-- Quick Template Demo Helper -->
               <div class="demo-template-row">
-                <span class="template-label">💡 演示快捷填入：</span>
                 <button type="button" class="template-btn" @click="insertTemplate">
-                  【填入标准高并发 Redis 架构回答】
+                  填入演示答案
                 </button>
               </div>
 
@@ -157,7 +136,7 @@
           </section>
         </main>
 
-        <!-- Bottom Hardware & Control Bar (Appendix A.7) -->
+        <!-- Bottom Hardware & Control Bar -->
         <footer class="room-bottom-controls">
           <div class="controls-pill-group">
             <button
@@ -172,6 +151,7 @@
               <span v-if="transcribing" class="rec-dot"></span>
               <span>{{ speechSupported ? (transcribing ? '停止口述' : '语音口述') : '不支持语音' }}</span>
             </button>
+            <span v-if="transcribing" class="asr-phase-indicator">{{ asrPhaseText }}</span>
 
             <button
               type="button"
@@ -202,55 +182,27 @@
               <span>{{ speaking ? '停止朗读' : '重听题目' }}</span>
             </button>
           </div>
-
-          <!-- Drawer Toggle Button for Live Assistant (Default Folded) -->
-          <div class="assistant-drawer-toggle">
-            <el-button
-              size="small"
-              class="drawer-btn"
-              @click="showAssist = !showAssist"
-            >
-              <el-icon><Cpu /></el-icon>
-              <span>{{ showAssist ? '收起实时助手' : '展开实时助手' }}</span>
-            </el-button>
-          </div>
         </footer>
-
-        <!-- Foldable Real-time Assistant Drawer -->
-        <transition name="drawer-slide">
-          <aside v-if="showAssist" class="live-assist-sidebar">
-            <div class="assist-drawer-header">
-              <span class="drawer-title">
-                <el-icon color="#3B82F6"><Cpu /></el-icon>
-                AI 实时表现辅助分析 (仅作参考)
-              </span>
-              <el-button link @click="showAssist = false">
-                <el-icon><Close /></el-icon>
-              </el-button>
-            </div>
-
-            <div class="assist-drawer-body">
-              <div class="assist-metric-item">
-                <span class="am-label">当前实时语速</span>
-                <span class="am-val text-green">158 字/分钟 (节奏适中)</span>
-              </div>
-              <div class="assist-metric-item">
-                <span class="am-label">逻辑结构识别</span>
-                <span class="am-val text-blue">总分总 · 条理层次分明</span>
-              </div>
-              <div class="assist-metric-item">
-                <span class="am-label">技术关键词命中</span>
-                <span class="am-val text-emerald">Redisson, 看门狗, 延迟双删</span>
-              </div>
-              <div class="assist-metric-item">
-                <span class="am-label">实时建议提醒</span>
-                <span class="am-val text-amber">建议结合实际生产压测 QPS 补充佐证</span>
-              </div>
-            </div>
-          </aside>
-        </transition>
       </div>
     </StateContainer>
+
+    <!-- 结束面试：交卷出报告 / 取消不生成报告 -->
+    <el-dialog v-model="endDialogVisible" title="结束本次模拟面试" width="420px" align-center>
+      <p class="end-dialog-tip">
+        你已作答 <strong>{{ session?.answered_count || 0 }}</strong> / {{ session?.total_questions || 0 }} 题。
+      </p>
+      <ul class="end-dialog-options">
+        <li><strong>交卷并生成报告</strong>：按已答内容结算，生成能力诊断报告（需至少作答 1 题）。</li>
+        <li><strong>取消面试</strong>：直接中止本次会话，不生成报告，已答部分仅保留在记录中。</li>
+      </ul>
+      <template #footer>
+        <div class="end-dialog-footer">
+          <el-button @click="endDialogVisible = false">继续作答</el-button>
+          <el-button type="warning" plain @click="doAbort">取消面试</el-button>
+          <el-button type="danger" :disabled="!session?.answered_count" @click="doFinish">交卷并生成报告</el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -262,7 +214,7 @@ import StateContainer from '@/components/StateContainer.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Clock, UserFilled, VideoCamera, Microphone, VideoPause, VideoPlay,
-  RefreshRight, Cpu, Close, InfoFilled, Stopwatch
+  RefreshRight, InfoFilled, Stopwatch
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -363,6 +315,63 @@ const speaking = ref(false)
 let recognition: SpeechRecognitionLike | null = null
 // 已定稿的转写文本前缀：识别结果整体替换，避免重复追加
 let committedText = ''
+// 本场转写是否收到过识别结果（用于停止时"未识别到语音"的诚实提示）
+let heardSpeech = false
+// 分级诊断：是否已采集音频 / 是否检测到人声 / no-speech 次数
+let audioCaptured = false
+let speechDetected = false
+let noSpeechCount = 0
+// 识别生命周期阶段（常驻显示在按钮旁，不依赖 toast）：listening=等待采音 audio=已开麦 speech=检测到人声 result=已出结果
+const asrPhase = ref<'listening' | 'audio' | 'speech' | 'result'>('listening')
+// 本地音量计（WebAudio 直采，不经网络）：用于区分"麦克风没声音"与"识别服务无响应"
+const asrLevel = ref(0)
+let asrPeakLevel = 0
+let micMeterStream: MediaStream | null = null
+let micMeterCtx: AudioContext | null = null
+let micMeterTimer: any = null
+
+const startMicLevelMeter = () => {
+  asrLevel.value = 0
+  asrPeakLevel = 0
+  navigator.mediaDevices?.getUserMedia({ audio: true }).then((stream) => {
+    micMeterStream = stream
+    const Ctx = window.AudioContext || (window as any).webkitAudioContext
+    micMeterCtx = new Ctx()
+    const src = micMeterCtx.createMediaStreamSource(stream)
+    const analyser = micMeterCtx.createAnalyser()
+    analyser.fftSize = 512
+    src.connect(analyser)
+    const data = new Uint8Array(analyser.frequencyBinCount)
+    micMeterTimer = setInterval(() => {
+      analyser.getByteTimeDomainData(data)
+      let sum = 0
+      for (let i = 0; i < data.length; i++) {
+        const v = (data[i] - 128) / 128
+        sum += v * v
+      }
+      const rms = Math.sqrt(sum / data.length)
+      asrLevel.value = Math.min(100, Math.round(rms * 300))
+      asrPeakLevel = Math.max(asrPeakLevel, asrLevel.value)
+    }, 120)
+  }).catch(() => { /* 音量计失败不影响转写本身 */ })
+}
+
+const stopMicLevelMeter = () => {
+  if (micMeterTimer) { clearInterval(micMeterTimer); micMeterTimer = null }
+  if (micMeterStream) { micMeterStream.getTracks().forEach(t => t.stop()); micMeterStream = null }
+  if (micMeterCtx) { micMeterCtx.close().catch(() => {}); micMeterCtx = null }
+  asrLevel.value = 0
+}
+
+const asrPhaseText = computed(() => {
+  const base = {
+    listening: '识别：等待音频…',
+    audio: '识别：麦克风已开启，等待人声…',
+    speech: '识别：已检测到人声，等待返回…',
+    result: '识别：正常出字中'
+  }[asrPhase.value]
+  return asrPhase.value === 'audio' ? `${base}（本地音量 ${asrLevel.value}%）` : base
+})
 
 const startTranscription = () => {
   const Ctor = getRecognitionCtor()
@@ -373,11 +382,18 @@ const startTranscription = () => {
   }
   if (transcribing.value) return
   committedText = answerText.value ? answerText.value.trimEnd() + ' ' : ''
+  heardSpeech = false
+  audioCaptured = false
+  speechDetected = false
+  noSpeechCount = 0
+  asrPhase.value = 'listening'
   recognition = new Ctor()
   recognition.lang = 'zh-CN'
   recognition.continuous = true
   recognition.interimResults = true
   recognition.onresult = (e: any) => {
+    heardSpeech = true
+    asrPhase.value = 'result'
     let finalText = ''
     let interimText = ''
     for (let i = 0; i < e.results.length; i++) {
@@ -391,7 +407,17 @@ const startTranscription = () => {
     if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
       ElMessage.error('麦克风权限被拒绝，无法语音作答')
       transcribing.value = false
-    } else if (e?.error !== 'aborted' && e?.error !== 'no-speech') {
+    } else if (e?.error === 'network') {
+      // Chrome 的识别需联网访问 Google 语音服务；国内网络下必失败
+      ElMessage.error('语音识别服务连接失败：Chrome 需能访问 Google 服务，建议改用 Edge 浏览器')
+      transcribing.value = false
+    } else if (e?.error === 'no-speech') {
+      // 麦克风持续无声会反复触发 no-speech → onend 自动重启；连续两次仍无内容则提示
+      noSpeechCount++
+      if (noSpeechCount === 2 && !heardSpeech) {
+        ElMessage.warning('麦克风未采到声音：请对着麦克风清晰说话，或检查系统默认输入设备')
+      }
+    } else if (e?.error !== 'aborted') {
       ElMessage.warning(`语音转写异常：${e?.error || 'unknown'}`)
     }
   }
@@ -401,10 +427,34 @@ const startTranscription = () => {
       try { recognition?.start() } catch { /* 已启动 */ }
     }
   }
+  // 分级事件探针：audiostart=已拿到麦克风流；speechstart=检测到人声
+  try {
+    (recognition as any).addEventListener?.('audiostart', () => {
+      audioCaptured = true
+      if (asrPhase.value === 'listening') asrPhase.value = 'audio'
+    })
+    (recognition as any).addEventListener?.('speechstart', () => {
+      speechDetected = true
+      if (asrPhase.value === 'audio' || asrPhase.value === 'listening') asrPhase.value = 'speech'
+    })
+  } catch { /* 部分浏览器不支持这些事件 */ }
   try {
     recognition.start()
     transcribing.value = true
+    startMicLevelMeter()
     ElMessage.success('已开始语音转写，请口述你的回答')
+    // 8 秒无任何识别结果：用本地音量峰值裁决卡点（麦克风无声 vs 服务无响应）
+    const iv = setInterval(() => {
+      if (!transcribing.value || heardSpeech) { clearInterval(iv); return }
+      if (asrPeakLevel >= 12) {
+        ElMessage.warning(`本地已采到声音（峰值 ${asrPeakLevel}%）但识别服务无返回：网络无法访问浏览器语音服务，建议检查网络/代理或改用键盘输入`)
+      } else if (audioCaptured) {
+        ElMessage.warning('麦克风已开启但本地音量过低：请靠近麦克风、提高输入音量，或检查系统默认录音设备')
+      } else {
+        ElMessage.warning('未采集到任何音频：请检查 Windows「设置→隐私→麦克风」全局开关与「允许桌面应用访问」，以及系统默认录音设备')
+      }
+      clearInterval(iv)
+    }, 8000)
   } catch (e) {
     ElMessage.error('语音转写启动失败，请检查麦克风权限')
     transcribing.value = false
@@ -414,10 +464,36 @@ const startTranscription = () => {
 const stopTranscription = () => {
   if (!transcribing.value) return
   transcribing.value = false
+  stopMicLevelMeter()
+  // 保留当前已显示文本（含未定稿的临时结果）作为定稿前缀，防止停止时丢字
   committedText = answerText.value ? answerText.value.trimEnd() + ' ' : ''
-  try { recognition?.stop() } catch { /* ignore */ }
+  const rec = recognition
   recognition = null
-  ElMessage.info('已停止语音转写')
+  if (!rec) { ElMessage.info('已停止语音转写'); return }
+  let finalized = false
+  const settle = () => {
+    if (finalized) return
+    finalized = true
+    // 以最终识别结果整体定稿，覆盖"停止前一刻"的临时文本
+    let finalText = ''
+    try {
+      const results = (rec as any).results
+      for (let i = 0; results && i < results.length; i++) {
+        if (results[i].isFinal) finalText += results[i][0].transcript
+      }
+    } catch { /* 部分浏览器 stop 后不可读 */ }
+    if (finalText) answerText.value = (committedText + finalText).trimStart()
+    if (!heardSpeech && !answerText.value.trim()) {
+      ElMessage.warning('未识别到语音内容，请确认已允许麦克风权限并靠近麦克风重试')
+    } else {
+      ElMessage.info('已停止语音转写')
+    }
+    try { rec.abort() } catch { /* ignore */ }
+  }
+  rec.onend = settle
+  try { rec.stop() } catch { settle() }
+  // 兜底：某些实现 stop 后不再触发 onend
+  setTimeout(settle, 1500)
 }
 
 const toggleTranscription = () => {
@@ -428,6 +504,7 @@ const toggleTranscription = () => {
 const resetTranscription = () => {
   if (transcribing.value) {
     transcribing.value = false
+    stopMicLevelMeter()
     try { recognition?.abort() } catch { /* ignore */ }
     recognition = null
   }
@@ -459,8 +536,6 @@ const handleReplayQuestion = () => {
   speaking.value = true
   synth.speak(utter)
 }
-
-const showAssist = ref(false) // Default folded per spec
 
 const currentStage = computed(() => {
   return currentQuestion.value?.stage || '综合考察阶段'
@@ -686,41 +761,30 @@ const submitCurrentAnswer = async () => {
   }
 }
 
-const handleConfirmFinish = () => {
-  // 无任何作答时交卷必被后端 409 拒绝（"尚无评分记录"），直接引导走取消
-  if (!session.value?.answered_count) {
-    ElMessage.warning('尚无任何作答记录，无法生成报告；如需退出请使用"取消面试"（或按 Esc）')
-    return
-  }
-  ElMessageBox.confirm('确定要提前结束本次模拟面试并生成答题报告吗？', '提示', {
-    confirmButtonText: '确定交卷',
-    cancelButtonText: '继续作答',
-    type: 'warning'
-  }).then(async () => {
-    const interviewId = Number(route.params.id)
-    await interviewApi.finishInterview(interviewId)
-    router.push(`/interviews/${interviewId}/report`)
-  }).catch(() => {})
+// 结束面试对话框（交卷 / 取消二合一）
+const endDialogVisible = ref(false)
+
+const doFinish = async () => {
+  if (!session.value?.answered_count) return
+  endDialogVisible.value = false
+  const interviewId = Number(route.params.id)
+  await interviewApi.finishInterview(interviewId)
+  router.push(`/interviews/${interviewId}/report`)
 }
 
 // 取消面试：中止会话、不生成报告，随时可退出（含一题未答的场景）
-const handleConfirmAbort = () => {
-  ElMessageBox.confirm('确定取消本次模拟面试吗？取消后不生成答题报告，本次会话以"已中止"归档。', '取消确认', {
-    confirmButtonText: '确定取消',
-    cancelButtonText: '继续作答',
-    type: 'warning'
-  }).then(async () => {
-    await interviewApi.abortInterview(Number(route.params.id))
-    router.push('/personal/interviews')
-  }).catch(() => {})
+const doAbort = async () => {
+  endDialogVisible.value = false
+  await interviewApi.abortInterview(Number(route.params.id))
+  router.push('/personal/interviews')
 }
 
-// 快捷键 Esc：唤起"取消面试"确认（中止不可逆，保留一步确认防误触）
+// 快捷键 Esc：打开"结束面试"对话框（交卷/取消在其中选择）
 const handleGlobalKeydown = (e: KeyboardEvent) => {
   if (e.key !== 'Escape' || evaluating.value) return
   // 已有弹窗打开时，Esc 归弹窗自身处理（关闭弹窗），不重复触发
-  if (document.querySelector('.el-message-box__wrapper, .el-message-box')) return
-  handleConfirmAbort()
+  if (document.querySelector('.el-message-box, .el-overlay')) return
+  endDialogVisible.value = true
 }
 
 // 整场时间归零：自动交卷生成报告（当前题如有未提交内容一并交上）；一题未答则自动中止
@@ -762,6 +826,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
   if (timer) clearInterval(timer)
   transcribing.value = false
+  stopMicLevelMeter()
   try { recognition?.abort() } catch { /* ignore */ }
   recognition = null
   if (ttsSupported.value) window.speechSynthesis.cancel()
@@ -772,14 +837,22 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* Full Immersive Dark Stage per Mockup 07 */
+/* 简约浅色主题：与全站设计系统统一，纵向铺满可用区域 */
 .interview-room-page {
-  min-height: 100vh;
-  background: #0B0F17;
-  color: #F3F4F6;
-  padding: 20px 24px 32px;
+  height: 100%;
+  background: #F6F7F9;
+  color: #1F2937;
   display: flex;
   flex-direction: column;
+}
+
+/* StateContainer 包裹层透传高度，使内容区铺满 */
+.interview-room-page :deep(.state-container),
+.interview-room-page :deep(.state-content) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .session-wrapper {
@@ -788,73 +861,88 @@ onUnmounted(() => {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   flex: 1;
+  min-height: 0;
 }
 
 /* Top Status Bar */
 .room-top-bar {
-  height: 60px;
-  background: #111827;
-  border: 1px solid #1F2937;
-  border-radius: 12px;
-  padding: 0 24px;
+  min-height: 56px;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
+  padding: 8px 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .top-left {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 }
 
 .room-job-badge {
   font-size: 14px;
   font-weight: 700;
-  color: #FFFFFF;
+  color: #111827;
 }
 
 .room-seq-indicator {
   font-size: 13px;
-  color: #93C5FD;
-  background: rgba(59, 130, 246, 0.15);
+  color: #2563EB;
+  background: #EFF6FF;
   padding: 3px 10px;
   border-radius: 6px;
-  border: 1px solid rgba(59, 130, 246, 0.3);
-}
-
-.room-stage-pill {
-  font-size: 12px;
-  color: #9CA3AF;
 }
 
 /* 题型胶囊（专业/通用/压力） */
 .room-qtype-pill {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
-  padding: 2px 9px;
+  padding: 2px 10px;
   border-radius: 9999px;
-  border: 1px solid transparent;
 }
 
 .qtype-pro {
-  color: #BFDBFE;
-  background: rgba(37, 99, 235, 0.22);
-  border-color: rgba(59, 130, 246, 0.45);
+  color: #1D4ED8;
+  background: #DBEAFE;
 }
 
 .qtype-gen {
-  color: #A7F3D0;
-  background: rgba(16, 185, 129, 0.18);
-  border-color: rgba(52, 211, 153, 0.4);
+  color: #047857;
+  background: #D1FAE5;
 }
 
 .qtype-str {
-  color: #FECACA;
-  background: rgba(239, 68, 68, 0.2);
-  border-color: rgba(248, 113, 113, 0.45);
+  color: #B91C1C;
+  background: #FEE2E2;
+}
+
+.top-right-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.room-timer-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #6B7280;
+  background: #F3F4F6;
+  padding: 4px 12px;
+  border-radius: 6px;
+}
+.room-timer-pill strong {
+  color: #111827;
+  font-weight: 700;
 }
 
 /* 逐题计时超时高亮 */
@@ -863,109 +951,51 @@ onUnmounted(() => {
 }
 
 .timer-overtime {
-  color: #FCA5A5;
-  background: rgba(239, 68, 68, 0.18);
-  border: 1px solid rgba(248, 113, 113, 0.45);
+  color: #B91C1C;
+  background: #FEE2E2;
 }
-
-.top-center-progress {
-  width: 280px;
-}
-
-.custom-room-progress :deep(.el-progress-bar__outer) {
-  background-color: #1F2937 !important;
-}
-
-.top-right-meta {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.room-timer-pill {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: #9CA3AF;
-  background: #1F2937;
-  padding: 4px 12px;
-  border-radius: 6px;
-}
-.room-timer-pill strong {
-  color: #EF4444;
-  font-weight: 700;
+.timer-overtime strong {
+  color: #B91C1C;
 }
 
 .abort-btn {
   border-radius: 6px !important;
 }
 
-/* Main Immersive Stage: 2 Columns */
+/* Main Stage: 2 Columns */
 .room-main-stage {
   display: grid;
   grid-template-columns: 1.1fr 1fr;
-  gap: 20px;
+  gap: 16px;
   flex: 1;
 }
 
 .ai-interviewer-card, .candidate-stage-card {
-  background: #111827;
-  border: 1px solid #1F2937;
-  border-radius: 16px;
-  padding: 28px;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 12px;
+  padding: 24px;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 /* Left AI Column */
 .ai-avatar-section {
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding-bottom: 24px;
-  border-bottom: 1px solid #1F2937;
+  gap: 14px;
 }
 
 .ai-avatar-circle {
-  width: 80px;
-  height: 80px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
-  background: #1E293B;
+  background: #EFF6FF;
   display: flex;
   align-items: center;
   justify-content: center;
-  position: relative;
-}
-
-.sound-wave-ring {
-  position: absolute;
-  inset: -6px;
-  border-radius: 50%;
-  border: 2px solid #3B82F6;
-  opacity: 0.5;
-}
-
-.pulse-1 {
-  animation: pulse 2.4s infinite ease-out;
-}
-.pulse-2 {
-  animation: pulse 2.4s infinite ease-out 1.2s;
-}
-
-@keyframes pulse {
-  0% { transform: scale(0.92); opacity: 0.8; }
-  100% { transform: scale(1.3); opacity: 0; }
-}
-
-.ai-portrait-inner {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #1E3A8A 0%, #0F172A 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-shrink: 0;
 }
 
 .ai-meta-info {
@@ -974,100 +1004,93 @@ onUnmounted(() => {
 }
 
 .ai-chief-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
-  color: #FFFFFF;
+  color: #111827;
 }
 
 .ai-status-indicator {
   font-size: 12px;
-  color: #10B981;
+  color: #6B7280;
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
+  margin-top: 3px;
 }
 
 .status-dot-blink {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: #10B981;
-  box-shadow: 0 0 8px #10B981;
 }
 
 .current-question-container {
-  margin: 32px 0 24px;
+  margin: 24px 0 20px;
   flex: 1;
 }
 
 .q-skill-badge-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 16px;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 .q-skill-tag {
   font-size: 12px;
   font-weight: 600;
-  color: #60A5FA;
-  background: rgba(59, 130, 246, 0.15);
+  color: #2563EB;
+  background: #EFF6FF;
   padding: 3px 10px;
-  border-radius: 4px;
-  border: 1px solid rgba(59, 130, 246, 0.3);
-}
-
-.q-diff-tag {
-  font-size: 11px;
-  color: #F59E0B;
-  background: rgba(245, 158, 11, 0.15);
-  padding: 2px 8px;
   border-radius: 4px;
 }
 
 .q-source-tag {
   font-size: 11px;
-  color: #93C5FD;
-  background: rgba(59, 130, 246, 0.12);
+  color: #6B7280;
+  background: #F3F4F6;
   padding: 2px 8px;
   border-radius: 4px;
-  border: 1px dashed rgba(59, 130, 246, 0.35);
 }
 
 .question-headline {
-  font-size: 24px;
-  font-weight: 700;
-  color: #FFFFFF;
-  line-height: 1.45;
-  letter-spacing: -0.015em;
+  font-size: 21px;
+  font-weight: 600;
+  color: #111827;
+  line-height: 1.55;
 }
 
 .question-hint-bar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  font-size: 12px;
-  color: #94A3B8;
-  background: #1E293B;
+  font-size: 12.5px;
+  color: #6B7280;
+  background: #F9FAFB;
   padding: 10px 14px;
   border-radius: 8px;
-  border: 1px solid #334155;
+  border: 1px solid #F3F4F6;
+}
+.question-hint-bar .el-icon {
+  margin-top: 2px;
+  flex-shrink: 0;
 }
 
 /* Right Candidate Stage */
 .candidate-stage-card {
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 
 .camera-monitor-box {
   width: 100%;
-  height: 220px;
-  background: #0F172A;
-  border: 1px solid #1F2937;
-  border-radius: 12px;
+  height: 200px;
+  background: #F3F4F6;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
   overflow: hidden;
   position: relative;
+  flex-shrink: 0;
 }
 
 .video-stream-active {
@@ -1085,14 +1108,13 @@ onUnmounted(() => {
 
 .video-status-overlay {
   position: absolute;
-  top: 12px;
-  left: 12px;
-  background: rgba(15, 23, 42, 0.75);
-  backdrop-filter: blur(4px);
-  padding: 4px 10px;
+  top: 10px;
+  left: 10px;
+  background: rgba(17, 24, 39, 0.65);
+  padding: 3px 10px;
   border-radius: 4px;
   font-size: 11px;
-  color: #E2E8F0;
+  color: #F9FAFB;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1116,10 +1138,10 @@ onUnmounted(() => {
 }
 
 .fallback-cam-icon {
-  width: 56px;
-  height: 56px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
-  background: #1E293B;
+  background: #E5E7EB;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1127,13 +1149,14 @@ onUnmounted(() => {
 
 .fallback-cam-text {
   font-size: 12px;
-  color: #64748B;
+  color: #9CA3AF;
 }
 
 .answer-box {
   margin-top: 16px;
   display: flex;
   flex-direction: column;
+  flex: 1;
 }
 
 .answer-box-header {
@@ -1145,73 +1168,83 @@ onUnmounted(() => {
 
 .answer-box-title {
   font-size: 13px;
-  color: #94A3B8;
+  font-weight: 600;
+  color: #374151;
 }
 
 .word-counter {
   font-size: 12px;
-  color: #64748B;
+  color: #9CA3AF;
+}
+
+.room-textarea {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 160px;
+}
+
+.room-textarea :deep(.el-textarea),
+.room-textarea :deep(.el-textarea__inner) {
+  height: 100% !important;
 }
 
 .room-textarea :deep(.el-textarea__inner) {
-  background-color: #0F172A !important;
-  border-color: #334155 !important;
-  color: #F8FAFC !important;
+  background-color: #FFFFFF !important;
+  border-color: #E5E7EB !important;
+  color: #1F2937 !important;
   font-size: 14px !important;
   line-height: 1.6 !important;
+  box-shadow: none !important;
+  resize: none;
 }
 
 .room-textarea :deep(.el-textarea__inner:focus) {
-  border-color: #3B82F6 !important;
-  box-shadow: 0 0 0 1px #3B82F6 inset !important;
+  border-color: #2563EB !important;
 }
 
 .demo-template-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.template-label {
-  font-size: 12px;
-  color: #94A3B8;
+  margin-top: 8px;
 }
 
 .template-btn {
   background: none;
   border: none;
-  color: #60A5FA;
+  color: #2563EB;
   font-size: 12px;
   cursor: pointer;
   padding: 0;
+}
+.template-btn:hover {
   text-decoration: underline;
 }
 
 .submit-action-row {
-  margin-top: 16px;
+  margin-top: 14px;
   display: flex;
   gap: 10px;
 }
 
 .room-skip-btn {
-  background: transparent !important;
-  border: 1px solid #475569 !important;
-  color: #94A3B8 !important;
+  background: #FFFFFF !important;
+  border: 1px solid #D1D5DB !important;
+  color: #6B7280 !important;
   font-size: 14px !important;
   border-radius: 8px !important;
   flex-shrink: 0;
 }
 .room-skip-btn:hover {
-  border-color: #64748B !important;
-  color: #CBD5E1 !important;
+  border-color: #9CA3AF !important;
+  color: #374151 !important;
 }
 
 .room-submit-btn {
   flex: 1;
   height: 44px;
   font-size: 15px !important;
-  font-weight: 700 !important;
+  font-weight: 600 !important;
   border-radius: 8px !important;
   background: #2563EB !important;
   border-color: #2563EB !important;
@@ -1221,40 +1254,41 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(37, 99, 235, 0.12);
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
   border-radius: 6px;
   padding: 8px 14px;
   font-size: 12px;
-  color: #93C5FD;
+  color: #1D4ED8;
   margin-top: 10px;
 }
 
-/* Bottom Hardware Controls */
+/* Bottom Controls */
 .room-bottom-controls {
-  height: 64px;
-  background: #111827;
-  border: 1px solid #1F2937;
-  border-radius: 12px;
-  padding: 0 24px;
+  background: #FFFFFF;
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
+  padding: 10px 16px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
 }
 
 .controls-pill-group {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .hardware-ctrl-btn {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #1F2937;
-  border: 1px solid #374151;
-  color: #D1D5DB;
+  background: #F9FAFB;
+  border: 1px solid #E5E7EB;
+  color: #4B5563;
   padding: 8px 16px;
   border-radius: 8px;
   font-size: 13px;
@@ -1263,14 +1297,15 @@ onUnmounted(() => {
 }
 
 .hardware-ctrl-btn:hover {
-  background: #374151;
-  color: #FFFFFF;
+  background: #F3F4F6;
+  border-color: #D1D5DB;
+  color: #111827;
 }
 
 .hardware-ctrl-btn.active {
-  background: rgba(37, 99, 235, 0.2);
-  border-color: #3B82F6;
-  color: #60A5FA;
+  background: #EFF6FF;
+  border-color: #2563EB;
+  color: #1D4ED8;
 }
 
 .hardware-ctrl-btn.disabled {
@@ -1287,88 +1322,44 @@ onUnmounted(() => {
   animation: rec-blink 1.2s infinite;
 }
 
+.asr-phase-indicator {
+  font-size: 12px;
+  color: #6B7280;
+  background: #F3F4F6;
+  border: 1px dashed #D1D5DB;
+  border-radius: 6px;
+  padding: 6px 12px;
+}
+
 @keyframes rec-blink {
   0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55); }
   70% { box-shadow: 0 0 0 7px rgba(239, 68, 68, 0); }
   100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
 }
 
-.assistant-drawer-toggle .drawer-btn {
-  background: #1F2937 !important;
-  border-color: #374151 !important;
-  color: #9CA3AF !important;
+/* 结束面试对话框 */
+.end-dialog-tip {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: #374151;
 }
-
-/* Foldable Live Assistant Panel */
-.live-assist-sidebar {
-  position: fixed;
-  right: 24px;
-  top: 96px;
-  width: 320px;
-  background: #111827;
-  border: 1px solid #374151;
-  border-radius: 12px;
-  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.5);
-  z-index: 100;
-  overflow: hidden;
+.end-dialog-tip strong {
+  color: #2563EB;
 }
-
-.assist-drawer-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  background: #1E293B;
-  border-bottom: 1px solid #334155;
-}
-
-.drawer-title {
+.end-dialog-options {
+  margin: 0;
+  padding-left: 18px;
   font-size: 13px;
-  font-weight: 700;
-  color: #F8FAFC;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  color: #6B7280;
+  line-height: 1.9;
 }
-
-.assist-drawer-body {
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.end-dialog-options strong {
+  color: #111827;
 }
-
-.assist-metric-item {
+.end-dialog-footer {
   display: flex;
-  flex-direction: column;
+  justify-content: flex-end;
   gap: 4px;
-  background: #0F172A;
-  padding: 8px 12px;
-  border-radius: 6px;
-  border: 1px solid #1E293B;
-}
-
-.am-label {
-  font-size: 11px;
-  color: #64748B;
-}
-
-.am-val {
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-.text-green { color: #10B981; }
-.text-blue { color: #3B82F6; }
-.text-emerald { color: #059669; }
-.text-amber { color: #F59E0B; }
-
-.drawer-slide-enter-active, .drawer-slide-leave-active {
-  transition: transform 0.2s ease, opacity 0.2s ease;
-}
-.drawer-slide-enter-from, .drawer-slide-leave-to {
-  transform: translateX(20px);
-  opacity: 0;
 }
 
 @media (max-width: 1024px) {
